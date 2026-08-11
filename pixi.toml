@@ -23,6 +23,7 @@ ninja = ">=1.13.2,<2"
 ipython = ">=8.37.0,<9"
 beakerx = ">=1.4.1,<2"
 notebook = "7.0.*"
+pytest = ">=8,<9"
 
 [tasks]
 install-pytorch-cuda = """

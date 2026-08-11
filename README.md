@@ -11,6 +11,41 @@ It provides:
 
 ---
 
+## Differentiable training benchmark
+
+The active PyTorch implementation now lives in `pytorch/`. LOITS is selected through a common backend interface:
+
+```python
+from loits import LOITS
+
+sampler = LOITS(backend="torch", device="cuda")
+events = sampler(theory_outputs, n_events)
+```
+
+The same interface is reserved for `cpp`, `openmp`, and `sycl` as those differentiable backends are added.
+
+PyTorch training uses default `torch.compile(...)`. Backward compilation is provided by AOTAutograd. The stream-compaction behavior of the original LOITS implementation is preserved.
+
+Run the end-to-end GAN benchmark with:
+
+```bash
+python benchmark_training.py --backend torch --device cuda --events 100000
+```
+
+Add semantic LOITS region profiling and a Chrome trace with:
+
+```bash
+python benchmark_training.py --backend torch --device cuda --events 100000 --regions --trace
+```
+
+`training_*.csv` contains profiler-derived end-to-end discriminator, generator, and full training-iteration timings. `regions_*.csv` contains forward/backward LOITS region timings collected through profiler hooks. Warmup iterations occur before profiling so compilation is excluded from steady-state measurements.
+
+Check graph capture and the AOTAutograd path with:
+
+```bash
+python -m pytorch.compile_check
+```
+
 # 🚀 Quick Start (Recommended)
 
 To reproduce all figures from the paper:
@@ -70,17 +105,9 @@ These correspond to:
 
 ---
 
-# Running Experiments (Optional)
+# Running Experiments
 
-To collect fresh results on your system:
-
-```bash
-make rerun-strong
-make rerun-weak
-make rerun-frs
-```
-
-⚠️ These runs are computationally expensive and may take significant time depending on hardware.
+The archived forward-only scaling data remain available for reproducing the conference figures. New differentiable measurements should use `benchmark_training.py`; the old forward-only Python benchmark has been removed.
 
 ---
 
@@ -209,6 +236,9 @@ These results arise from:
 
 ```
 .
+├── pytorch/             # PyTorch LOITS, theory, GAN benchmark, profiler
+├── loits.py             # uniform backend interface
+├── benchmark_training.py# end-to-end differentiable benchmark
 ├── cpp/                 # C++ implementation
 ├── omp/                 # OpenMP implementation
 ├── sycl/                # SYCL implementations + installer

@@ -8,13 +8,18 @@
         rerun-frs-cpu rerun-frs-cuda rerun-frs-hip rerun-frs-xpu \
         clean clean-cpp clean-omp clean-sycl \
         smoke scaling profile debug \
-        test test-cpp test-omp test-sycl \
+        test test-pytorch test-cpp test-omp test-sycl \
         test-omp-basic test-omp-instrument test-omp-flto test-omp-instrument-flto \
         test-sycl-acpp test-sycl-acpp-omp test-sycl-acpp-cuda \
-        test-sycl-dpcpp-cuda test-sycl-dpcpp-hip test-sycl-usy
+        test-sycl-dpcpp-cuda test-sycl-dpcpp-hip test-sycl-usy \
+        benchmark-training profile-training compile-check
 
 SHELL := /usr/bin/env bash
 PIXI_RUN := ./setup-pixi.sh run
+BACKEND ?= torch
+DEVICE ?= cpu
+EVENTS ?= 10000
+ITERATIONS ?= 10
 
 # Default: regenerate figures from results/ only
 all: plot
@@ -136,11 +141,28 @@ rerun-frs-hip: rebuild
 rerun-frs-xpu: rebuild
 	DORUN=1 FORCE_XPU=1 ./plot_fixed_resource_and_stacked.sh
 
+
+# -------------------------
+# Differentiable training benchmark
+# -------------------------
+
+benchmark-training:
+	$(PIXI_RUN) python benchmark_training.py --backend $(BACKEND) --device $(DEVICE) --events $(EVENTS) --iterations $(ITERATIONS)
+
+profile-training:
+	$(PIXI_RUN) python benchmark_training.py --backend $(BACKEND) --device $(DEVICE) --events $(EVENTS) --iterations $(ITERATIONS) --regions --trace
+
+compile-check:
+	$(PIXI_RUN) python -m pytorch.compile_check
+
 # -------------------------
 # Tests
 # -------------------------
 
-test: env test-omp test-sycl
+test: env test-pytorch test-omp test-sycl
+
+test-pytorch:
+	$(PIXI_RUN) python -m pytest -q tests
 
 test-cpp:
 	@echo "No explicit cpp test target defined."

@@ -1,0 +1,125 @@
+import csv
+from pathlib import Path
+
+import torch
+from torch.profiler import record_function
+
+
+class RegionHooks:
+    def __init__(self, module, prefix="loits"):
+        self.handles = []
+        self.forward_contexts = {}
+        self.backward_contexts = {}
+        core = module.core if hasattr(module, "core") else module
+        for name in core.region_names:
+            region = getattr(core, name)
+            self._attach(region, name, prefix)
+
+    def _attach(self, module, name, prefix):
+        key = id(module)
+
+        def forward_pre(*_):
+            ctx = record_function(f"{prefix}::forward::{name}")
+            ctx.__enter__()
+            self.forward_contexts.setdefault(key, []).append(ctx)
+
+        def forward_post(*_):
+            self.forward_contexts[key].pop().__exit__(None, None, None)
+
+        def backward_pre(*_):
+            ctx = record_function(f"{prefix}::backward::{name}")
+            ctx.__enter__()
+            self.backward_contexts.setdefault(key, []).append(ctx)
+
+        def backward_post(*_):
+            self.backward_contexts[key].pop().__exit__(None, None, None)
+
+        self.handles.extend(
+            [
+                module.register_forward_pre_hook(forward_pre),
+                module.register_forward_hook(forward_post),
+                module.register_full_backward_pre_hook(backward_pre),
+                module.register_full_backward_hook(backward_post),
+            ]
+        )
+
+    def close(self):
+        for handle in self.handles:
+            handle.remove()
+        self.handles.clear()
+
+
+class TrainingProfiler:
+    def __init__(self, device):
+        self.device = torch.device(device)
+
+    def activities(self):
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        activity = getattr(torch.profiler.ProfilerActivity, self.device.type.upper(), None)
+        if self.device.type != "cpu" and activity is not None:
+            activities.append(activity)
+        return activities
+
+    def synchronize(self):
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        elif self.device.type == "xpu":
+            torch.xpu.synchronize(self.device)
+
+    def run(self, trainer, warmup=5, iterations=10, trace_path=None):
+        for _ in range(warmup):
+            trainer.step()
+        self.synchronize()
+
+        with torch.profiler.profile(
+            activities=self.activities(),
+            record_shapes=False,
+            profile_memory=False,
+            with_stack=False,
+            acc_events=True,
+        ) as prof:
+            for _ in range(iterations):
+                with record_function("gan::training_iteration"):
+                    trainer.step()
+                    self.synchronize()
+
+        if trace_path:
+            path = Path(trace_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            prof.export_chrome_trace(str(path))
+        return prof
+
+    @staticmethod
+    def rows(prof, backend, device, n_events):
+        rows = []
+        occurrences = {}
+        for event in prof.events():
+            if not (event.name.startswith("gan::") or event.name.startswith("loits::")):
+                continue
+            occurrence = occurrences.get(event.name, 0)
+            occurrences[event.name] = occurrence + 1
+            rows.append(
+                {
+                    "backend": backend,
+                    "device": str(device),
+                    "events": n_events,
+                    "region": event.name,
+                    "occurrence": occurrence,
+                    "cpu_ms": event.cpu_time_total / 1000.0,
+                    "device_ms": event.device_time_total / 1000.0,
+                    "self_cpu_ms": event.self_cpu_time_total / 1000.0,
+                    "self_device_ms": event.self_device_time_total / 1000.0,
+                }
+            )
+        return rows
+
+    @staticmethod
+    def write_csv(path, rows):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not rows:
+            return
+        with path.open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            writer.writeheader()
+            writer.writerows(rows)
