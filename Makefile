@@ -86,7 +86,7 @@ rebuild-sycl: preflight clean-sycl build-sycl
 build: build-cpp build-omp build-sycl
 
 build-cpp:
-	$(PIXI_RUN) make -C cpp CXX=g++ CC=gcc
+	$(PIXI_RUN) python -m cpp.build
 
 build-omp:
 	$(PIXI_RUN) make -C omp CXX=g++ CC=gcc
@@ -159,13 +159,13 @@ compile-check:
 # Tests
 # -------------------------
 
-test: env test-pytorch test-omp test-sycl
+test: env test-pytorch test-cpp test-omp test-sycl
 
 test-pytorch:
 	$(PIXI_RUN) python -m pytest -q tests
 
 test-cpp:
-	@echo "No explicit cpp test target defined."
+	$(PIXI_RUN) python -m pytest -q tests/test_cpp_loits.py
 
 test-omp: test-omp-basic
 
@@ -224,7 +224,7 @@ debug:
 clean: clean-cpp clean-omp clean-sycl
 
 clean-cpp:
-	$(PIXI_RUN) make -C cpp clean
+	rm -rf cpp/build
 
 clean-omp:
 	$(PIXI_RUN) make -C omp clean

@@ -93,11 +93,22 @@ class TrainingProfiler:
     def rows(prof, backend, device, n_events):
         rows = []
         occurrences = {}
+
+        def relevant(name):
+            return name.startswith("gan::") or name.startswith("loits::")
+
+        def relevant_parent(event):
+            parent = event.cpu_parent
+            while parent is not None and not relevant(parent.name):
+                parent = parent.cpu_parent
+            return parent
+
         for event in prof.events():
-            if not (event.name.startswith("gan::") or event.name.startswith("loits::")):
+            if not relevant(event.name):
                 continue
             occurrence = occurrences.get(event.name, 0)
             occurrences[event.name] = occurrence + 1
+            parent = relevant_parent(event)
             rows.append(
                 {
                     "backend": backend,
@@ -105,6 +116,13 @@ class TrainingProfiler:
                     "events": n_events,
                     "region": event.name,
                     "occurrence": occurrence,
+                    "event_id": event.id,
+                    "parent_event_id": parent.id if parent is not None else "",
+                    "parent_region": parent.name if parent is not None else "",
+                    "thread_id": event.thread,
+                    "sequence_nr": event.sequence_nr,
+                    "start_us": event.time_range.start,
+                    "end_us": event.time_range.end,
                     "cpu_ms": event.cpu_time_total / 1000.0,
                     "device_ms": event.device_time_total / 1000.0,
                     "self_cpu_ms": event.self_cpu_time_total / 1000.0,

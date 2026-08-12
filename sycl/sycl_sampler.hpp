@@ -1,7 +1,7 @@
 #pragma once
 #include "../common/matrix.hpp"
 #include "../common/utils.hpp"
-#include "../cpp/cpp_sampler.hpp"
+#include "../legacy/cpp_sampler.hpp"
 #define FP double
 
 class sycl_sampler {

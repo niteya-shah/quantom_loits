@@ -27,7 +27,7 @@ create_binary_directories:
 ###############################################################################
 #                                  Sampler                                    #
 ###############################################################################
-libsampler-acpp-gen.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+libsampler-acpp-gen.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(ADAPTIVECPP) $(CXXFLAGS) $(IMPLEMENTATION_FLAGS) -O3 -std=c++17 --acpp-targets="generic" -ffast-math -shared -ldl -fPIC -o $@ $^
 
 acpp/sycl_wrapper$(WRAPPER_NAME): libsampler-acpp-gen.so pybind_wrapper.cpp
@@ -42,7 +42,7 @@ acpp/sycl_wrapper$(WRAPPER_NAME): libsampler-acpp-gen.so pybind_wrapper.cpp
 		$(TORCH_LDFLAGS) $(TORCH_LIBS)
 		#-fsanitize=address -shared-libasan \
 
-libsampler-dpcp-tbb.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+libsampler-dpcp-tbb.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(DPCPPCPU) $(CXXFLAGS) $(IMPLEMENTATION_FLAGS) -O3 -std=c++17 \
 		-fsycl -fsycl-targets=native_cpu \
 		-DCPU_SELECTOR=1\
@@ -62,7 +62,7 @@ $(DPCPP_TBB_WRAPPER): libsampler-dpcp-tbb.so pybind_wrapper.cpp
 		-o $@ \
 		$(TORCH_LDFLAGS) $(TORCH_LIBS)
 
-libsampler-dpcp-cud.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+libsampler-dpcp-cud.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(DPCPPCUDA) $(CXXFLAGS) $(IMPLEMENTATION_FLAGS) -DGPU_SELECTOR=1 -O3 -std=c++17 \
 		-fsycl -fsycl-targets=nvptx64-nvidia-cuda \
 		-Xsycl-target-backend=nvptx64-nvidia-cuda --offload-arch=$(CUDA_DEV_TARGET) \
@@ -82,7 +82,7 @@ $(DPCPP_CUDA_WRAPPER): libsampler-dpcp-cud.so pybind_wrapper.cpp
 		-o $@ \
 		$(TORCH_LDFLAGS) $(TORCH_LIBS)
 
-libsampler-dpcp-hip.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+libsampler-dpcp-hip.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	@test -n "$(DPCPP_HIP_LIBSPIRV_BC)" || (echo "Could not locate libspirv*.bc under $(DPCPPHIP_INSTALL_ROOT)" >&2; exit 1)
 	$(DPCPPHIP) $(CXXFLAGS) $(IMPLEMENTATION_FLAGS)  -DGPU_SELECTOR=1 -O3 -std=c++17 \
 		-fsycl -fsycl-targets=amdgcn-amd-amdhsa \
@@ -103,7 +103,7 @@ $(DPCPP_HIP_WRAPPER): libsampler-dpcp-hip.so pybind_wrapper.cpp
 		-o $@ \
 		$(TORCH_LDFLAGS) $(TORCH_LIBS)
 
-libsampler-dpcp-spirv.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+libsampler-dpcp-spirv.so: sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(ICPX) $(CXXFLAGS) $(IMPLEMENTATION_FLAGS) -O3 -std=c++17 -fsycl -fsycl-targets=spir64_gen-unknown-unknown-sycldevice -Xsycl-target-backend=spir64_gen-unknown-unknown-sycldevice -Wl,-rpath=$(ONEAPI_INSTALL_ROOT)/lib -L$(ONEAPI_INSTALL_ROOT)/lib -lsycl -lur_loader -ffast-math -march=native -shared -ldl -fPIC -lz -o $@ $^
 
 $(DPCPP_XPU_WRAPPER): libsampler-dpcp-spv.so pybind_wrapper.cpp
@@ -147,12 +147,12 @@ activate_dpcpp_xpu: $(DPCPP_XPU_WRAPPER)
 #                                   Tests                                     #
 ###############################################################################
 # UniSYCL
-sycl_test_usy: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+sycl_test_usy: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 		$(UNISYCL) $(IMPLEMENTATION_FLAGS) -save-kernels $(CXXFLAGS) -std=c++17 -g -O3 -o $@ $^
 		#$(UNISYCL) $(CXXFLAGS) -std=c++17 -g -O3 -o $@ $^
 
 # DPC++
-sycl_test_dpcpp_hip: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+sycl_test_dpcpp_hip: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	@test -n "$(DPCPP_HIP_LIBSPIRV_BC)" || (echo "Could not locate libspirv*.bc under $(DPCPPHIP_INSTALL_ROOT)" >&2; exit 1)
 	$(DPCPPHIP) $(IMPLEMENTATION_FLAGS) -std=c++17 \
 		-fsycl -fsycl-targets=amdgcn-amd-amdhsa,spir64_x86_64 \
@@ -162,7 +162,7 @@ sycl_test_dpcpp_hip: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../comm
 		-Wl,-rpath=$(DPCPPHIP_INSTALL_ROOT)/lib -L$(DPCPPHIP_INSTALL_ROOT)/lib \
 		-lsycl -o $@ $^
 
-sycl_test_dpcpp_cuda: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+sycl_test_dpcpp_cuda: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(DPCPPCUDA) $(IMPLEMENTATION_FLAGS) -O3 -std=c++17 \
 		-fsycl -fsycl-targets=nvptx64-nvidia-cuda,spir64_x86_64 \
 		-Xsycl-target-backend=nvptx64-nvidia-cuda --offload-arch=$(CUDA_DEV_TARGET) \
@@ -172,13 +172,13 @@ sycl_test_dpcpp_cuda: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../com
 		-o $@ $^
 
 # AdaptiveCpp
-sycl_test_acpp: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+sycl_test_acpp: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(ADAPTIVECPP) $(IMPLEMENTATION_FLAGS) -std=c++17 --acpp-targets="generic" -O0 -fno-omit-frame-pointer -g $(CXXFLAGS) -fPIC -o $@ $^
 
-sycl_test_acpp_omp: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+sycl_test_acpp_omp: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(ADAPTIVECPP) $(IMPLEMENTATION_FLAGS) -std=c++17 --acpp-targets="omp" -O3 -g $(CXXFLAGS) -fPIC -o $@ $^
 
-sycl_test_acpp_cud: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+sycl_test_acpp_cud: sycl_test.cpp sycl_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(ADAPTIVECPP) $(IMPLEMENTATION_FLAGS) -std=c++17 --acpp-targets="cuda.explicit-multipass:$(CUDA_DEV_TARGET)" -I$(NVMATHLIBS)/include -L$(NVMATHLIBS)/lib64 -I$(CUDA_PATH)/include -L$(CUDA_PATH)/lib -O3 --acpp-nvcxx=$(NVCXX) --acpp-cuda-path=$(CUDA_PATH) -o $@ $^
 
 run_sycl_test_acpp_cuda: sycl_test_acpp

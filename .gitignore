@@ -9,3 +9,5 @@ results_loits_performance_scans
 .ipynb_checkpoints
 .pixi-local-*
 
+
+cpp/build/

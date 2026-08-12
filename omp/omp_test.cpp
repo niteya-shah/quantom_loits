@@ -4,7 +4,7 @@
 #include <cassert>
 #include <omp.h>
 #include "omp_sampler.hpp"
-#include "../cpp/cpp_sampler.hpp"
+#include "../legacy/cpp_sampler.hpp"
 #include "../common/test_inputs.hpp"
 
 int main(int argc, char*argv[]){

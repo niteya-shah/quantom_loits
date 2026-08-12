@@ -6,7 +6,7 @@ all: $(WRAPPER_NAME)
 ###############################################################################
 #                                  Sampler                                    #
 ###############################################################################
-omp_libsampler.so: omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+omp_libsampler.so: omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(CXX) $(CXXFLAGS) -O3 -DWRAPPER_BUILD=1 -std=c++17 -march=native -ffast-math -shared -fPIC -fopenmp -lgomp -o $@ $^
 	#$(CXX) $(CXXFLAGS) -g -O0 -DWRAPPER_BUILD=1 -std=c++17 -march=native -ffast-math -shared -fPIC -fopenmp -lgomp -o $@ $^
 
@@ -21,16 +21,16 @@ $(WRAPPER_NAME): omp_libsampler.so pybind_wrapper.cpp
 		-o $@\
 		$(TORCH_LDFLAGS) $(TORCH_LIBS)
 
-omp_test: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+omp_test: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(CXX) -g -O0 -std=c++17 $(CXXFLAGS) -fopenmp -o $@ $^
 
-omp_instrument: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+omp_instrument: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(CXX) -DINSTRUMENTATION -g -O3 -std=c++17 $(CXXFLAGS) -fopenmp -o $@ $^
 
-omp_test_flto: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+omp_test_flto: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(CXX) -g -O3 -std=c++17 $(CXXFLAGS) -fopenmp -flto -o $@ $^
 
-omp_instrument_flto: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../cpp/cpp_sampler.cpp
+omp_instrument_flto: omp_test.cpp omp_sampler.cpp ../common/matrix.cpp ../common/utils.cpp ../legacy/cpp_sampler.cpp
 	$(CXX) -DINSTRUMENTATION -g -O3 -std=c++17 $(CXXFLAGS) -fopenmp -flto -o $@ $^
 
 clean:

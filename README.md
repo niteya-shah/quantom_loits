@@ -22,7 +22,7 @@ sampler = LOITS(backend="torch", device="cuda")
 events = sampler(theory_outputs, n_events)
 ```
 
-The same interface is reserved for `cpp`, `openmp`, and `sycl` as those differentiable backends are added.
+The same interface is active for `cpp`; `openmp` and `sycl` will follow the same contract.
 
 PyTorch training uses default `torch.compile(...)`. Backward compilation is provided by AOTAutograd. The stream-compaction behavior of the original LOITS implementation is preserved.
 
@@ -30,15 +30,21 @@ Run the end-to-end GAN benchmark with:
 
 ```bash
 python benchmark_training.py --backend torch --device cuda --events 100000
+python benchmark_training.py --backend cpp --device cpu --events 100000
 ```
 
 Add semantic LOITS region profiling and a Chrome trace with:
 
 ```bash
 python benchmark_training.py --backend torch --device cuda --events 100000 --regions --trace
+python benchmark_training.py --backend cpp --device cpu --events 100000 --regions --trace
 ```
 
-`training_*.csv` contains profiler-derived end-to-end discriminator, generator, and full training-iteration timings. `regions_*.csv` contains forward/backward LOITS region timings collected through profiler hooks. Warmup iterations occur before profiling so compilation is excluded from steady-state measurements.
+The C++ backend is a CPU-only PyTorch C++ extension. It consumes PyTorch tensors directly, preserves LOITS stream compaction, and implements a hand-written reverse-mode VJP for the continuous `xsec -> rho -> CDF -> interpolation -> events` path. Random samples, allocation counts, interval selection, acceptance, and compaction decisions are fixed during the reverse pass. Forward intermediates required by the VJP are saved rather than recomputed.
+
+C++ profiling uses PyTorch C++ user scopes, so the same `torch.profiler` session captures native `rho`, `CDF`, interpolation, stream-compaction, and backward-VJP regions alongside the GAN-level ranges.
+
+`training_*.csv` contains profiler-derived end-to-end discriminator, generator, and full training-iteration timings. `regions_*.csv` contains forward/backward LOITS region timings collected through PyTorch hooks or native C++ profiler scopes. Warmup iterations occur before profiling so compilation is excluded from steady-state measurements.
 
 Check graph capture and the AOTAutograd path with:
 
@@ -132,16 +138,15 @@ This ensures:
 
 # Build System
 
-Wrappers are built automatically when needed, but can be built manually:
+Backends are built automatically when needed. The C++ backend can also be built directly with:
 
 ```bash
-make build
+make build-cpp
+# or
+python -m cpp.build
 ```
 
-This compiles:
-- `cpp/`   → C++ backend
-- `omp/`   → OpenMP backend
-- `sycl/`  → SYCL backends (AdaptiveCpp, DPC++)
+The C++ extension uses `torch.utils.cpp_extension` and writes its local build products to `cpp/build/`. The pre-existing OpenMP/SYCL code still uses `legacy/cpp_sampler.*` temporarily; the active C++ backend has no dependency on that legacy matrix/timing implementation.
 
 ---
 
