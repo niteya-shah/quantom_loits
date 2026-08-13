@@ -2,7 +2,7 @@ from .backend import load_extension
 
 
 def main():
-    extension = load_extension(verbose=True)
+    extension = load_extension(verbose=True, allow_incomplete=True)
     print(f"SYCL device: {extension.device_name()}")
 
 

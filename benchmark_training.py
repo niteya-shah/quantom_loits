@@ -15,9 +15,9 @@ def safe_component(value):
 def implementation_name(backend):
     if backend != "sycl":
         return backend
-    from sycl.backend import configured_toolchain
+    from sycl.backend import selected_variant
 
-    return configured_toolchain()
+    return selected_variant()
 
 
 def native_threads(backend):

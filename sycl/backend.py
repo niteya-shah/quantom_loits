@@ -1,4 +1,6 @@
 import ctypes
+import os
+import re
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -10,59 +12,151 @@ from torch.utils.cpp_extension import load
 
 _EXTENSION = None
 _CORE_HANDLE = None
+_LOADED_VARIANT = None
+_VARIANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
 
 
 def _root():
     return Path(__file__).resolve().parent
 
 
-def core_library_path():
-    return _root() / "build" / "libquantom_loits_sycl.so"
+def _build_root():
+    return _root() / "build"
 
 
-def is_built():
-    build = _root() / "build"
+def _validate_variant(variant):
+    variant = str(variant).strip()
+    if not variant:
+        raise RuntimeError("QUANTOM_SYCL_VARIANT is empty")
+    if not _VARIANT_RE.fullmatch(variant):
+        raise RuntimeError(
+            "invalid SYCL variant name; use only letters, digits, '.', '_', '+', and '-'"
+        )
+    return variant
+
+
+def selected_variant():
+    value = os.environ.get("QUANTOM_SYCL_VARIANT")
+    if value is None:
+        raise RuntimeError(
+            "QUANTOM_SYCL_VARIANT must be set explicitly for the SYCL backend"
+        )
+    return _validate_variant(value)
+
+
+def variant_build_dir(variant=None):
+    if variant is None:
+        variant = selected_variant()
+    else:
+        variant = _validate_variant(variant)
+    return _build_root() / variant
+
+
+def core_library_path(variant=None):
+    return variant_build_dir(variant) / "libquantom_loits_sycl.so"
+
+
+def _complete_build(variant):
+    build = variant_build_dir(variant)
     return (
-        core_library_path().is_file()
+        core_library_path(variant).is_file()
         and (build / "toolchain.txt").is_file()
         and (build / "torch_device.txt").is_file()
+        and (build / "target.txt").is_file()
     )
 
 
+def built_variants():
+    root = _build_root()
+    if not root.is_dir():
+        return ()
+    variants = []
+    for path in root.iterdir():
+        if not path.is_dir() or not _VARIANT_RE.fullmatch(path.name):
+            continue
+        if _complete_build(path.name):
+            variants.append(path.name)
+    return tuple(sorted(variants))
+
+
+def is_built(variant=None):
+    if variant is None:
+        try:
+            variant = selected_variant()
+        except RuntimeError:
+            return False
+    try:
+        return _complete_build(variant)
+    except RuntimeError:
+        return False
+
+
+def _read_marker(name, variant=None):
+    build = variant_build_dir(variant)
+    marker = build / name
+    if not marker.is_file():
+        raise RuntimeError(
+            f"selected SYCL variant {build.name!r} is incomplete: missing {name}"
+        )
+    value = marker.read_text().strip()
+    if not value:
+        raise RuntimeError(
+            f"selected SYCL variant {build.name!r} is incomplete: empty {name}"
+        )
+    return value
+
+
 def configured_toolchain():
-    marker = _root() / "build" / "toolchain.txt"
-    if marker.is_file():
-        value = marker.read_text().strip()
-        if value:
-            return value
-    return "sycl"
+    return _read_marker("toolchain.txt")
+
+
+def configured_target():
+    return _read_marker("target.txt")
 
 
 def configured_torch_device_mode():
-    marker = _root() / "build" / "torch_device.txt"
-    if marker.is_file():
-        value = marker.read_text().strip()
-        if value:
-            return value
-    return "cpu"
+    return _read_marker("torch_device.txt")
 
 
 def configured_torch_device():
     value = configured_torch_device_mode()
-    return "cpu" if value == "auto" else value
+    if value == "auto":
+        raise RuntimeError(
+            "the selected generic SYCL build has no fixed Torch device; "
+            "set QUANTOM_SYCL_TEST_DEVICE explicitly for tests"
+        )
+    return value
+
+
+def _selection_error():
+    variants = built_variants()
+    suffix = f" Built variants: {', '.join(variants)}." if variants else " No built variants were found."
+    return "QUANTOM_SYCL_VARIANT must be set explicitly for the SYCL backend." + suffix
 
 
 def availability(device="cpu"):
     device = torch.device(device)
-    if not is_built():
-        return False, (
-            "SYCL core is not built; build one explicitly with "
-            "sycl/build-acpp.sh <target> or sycl/build-dpcpp.sh <target>"
-        )
+    try:
+        variant = selected_variant()
+    except RuntimeError as exc:
+        if "QUANTOM_SYCL_VARIANT" not in os.environ:
+            return False, _selection_error()
+        return False, str(exc)
 
-    configured = configured_torch_device_mode()
+    if not is_built(variant):
+        variants = built_variants()
+        suffix = f" Built variants: {', '.join(variants)}." if variants else ""
+        return False, f"selected SYCL variant {variant!r} is not built.{suffix}"
+
+    try:
+        configured = configured_torch_device_mode()
+    except RuntimeError as exc:
+        return False, str(exc)
     if configured != "auto" and configured != device.type:
-        return False, f"built SYCL target expects torch device {configured!r}, requested {device.type!r}"
+        return False, (
+            f"selected SYCL variant {variant!r} expects torch device "
+            f"{configured!r}, requested {device.type!r}"
+        )
 
     if device.type == "cpu":
         return True, ""
@@ -74,22 +168,34 @@ def availability(device="cpu"):
     return False, f"unsupported torch device type {device.type!r}"
 
 
-def load_extension(verbose=False):
-    global _EXTENSION, _CORE_HANDLE
+def load_extension(verbose=False, allow_incomplete=False):
+    global _EXTENSION, _CORE_HANDLE, _LOADED_VARIANT
+
+    variant = selected_variant()
     if _EXTENSION is not None:
+        if variant != _LOADED_VARIANT:
+            raise RuntimeError(
+                f"SYCL variant {_LOADED_VARIANT!r} is already loaded in this Python process; "
+                f"cannot switch to {variant!r}. Start a new process to use another variant."
+            )
         return _EXTENSION
 
     root = _root()
-    build = root / "build"
-    library = core_library_path()
-    if not library.is_file():
+    build = variant_build_dir(variant)
+    library = core_library_path(variant)
+    if allow_incomplete:
+        if not library.is_file():
+            raise RuntimeError(
+                f"selected SYCL variant {variant!r} has no compiled core library"
+            )
+    elif not is_built(variant):
         raise RuntimeError(
-            "SYCL core is not built. Run sycl/build-acpp.sh <target> or "
-            "sycl/build-dpcpp.sh <target> first."
+            f"selected SYCL variant {variant!r} is not built. "
+            "Build it explicitly with sycl/build-acpp.sh or sycl/build-dpcpp.sh."
         )
 
-    # Load the selected SYCL runtime/core first so the regular Torch binding can
-    # remain a host C++ extension with no SYCL headers or device-specific code.
+    # Load this variant's SYCL runtime/core first so the regular Torch binding
+    # can remain host C++ with no SYCL headers or device-specific code.
     _CORE_HANDLE = ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
     _EXTENSION = load(
         name="quantom_loits_sycl_binding",
@@ -104,6 +210,7 @@ def load_extension(verbose=False):
         ],
         verbose=verbose,
     )
+    _LOADED_VARIANT = variant
     return _EXTENSION
 
 

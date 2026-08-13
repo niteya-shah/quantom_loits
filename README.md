@@ -71,52 +71,56 @@ make build-cpp
 make build-openmp
 ```
 
-The SYCL backend has one `sycl/loits_core.cpp`. The Bash build scripts compile
-that same source for the requested implementation/target.
+The SYCL backend has one `sycl/loits_core.cpp`. Multiple compiled variants can
+coexist under `sycl/build/<variant>/` on a shared filesystem; every variant
+compiles that same source. SYCL builds are fully explicit: provide a variant
+name, target, and an architecture for CUDA/HIP.
 
-AdaptiveCpp:
-
-```bash
-./sycl/build-acpp.sh generic
-./sycl/build-acpp.sh cpu
-./sycl/build-acpp.sh cuda
-./sycl/build-acpp.sh hip
-```
-
-DPC++:
+AdaptiveCpp examples:
 
 ```bash
-./sycl/build-dpcpp.sh cpu
-./sycl/build-dpcpp.sh xpu
-./sycl/build-dpcpp.sh cuda
-./sycl/build-dpcpp.sh hip
+./sycl/build-acpp.sh acpp-a100 cuda sm_80
+./sycl/build-acpp.sh acpp-mi250 hip gfx90a
+./sycl/build-acpp.sh acpp-cpu cpu
 ```
 
-Equivalent top-level Make targets are available, for example:
+DPC++ examples:
 
 ```bash
-make build-sycl-acpp-cuda
-make build-sycl-dpcpp-xpu
+./sycl/build-dpcpp.sh dpcpp-xpu xpu
+./sycl/build-dpcpp.sh dpcpp-a100 cuda sm_80
 ```
 
-Compiler paths and device architecture flags can be overridden using the
-environment variables documented in `sycl/README.md`.
+Equivalent top-level Make targets are:
+
+```bash
+make build-sycl-acpp SYCL_VARIANT=acpp-a100 SYCL_TARGET=cuda SYCL_ARCH=sm_80
+make build-sycl-dpcpp SYCL_VARIANT=dpcpp-xpu SYCL_TARGET=xpu
+```
+
+There are deliberately no default SYCL target, architecture, or runtime build.
+See `sycl/README.md` for compiler overrides and cluster usage.
 
 ## Backend availability
 
 SYCL is optional. `make build` and `make build-all` build only the portable
-PyTorch/C++/OpenMP side; SYCL builds are always explicit because the compiler
-and target differ by machine. Inspect the current device/backend status with:
+PyTorch/C++/OpenMP side. A SYCL runtime variant must always be selected
+explicitly, even if exactly one build exists:
 
 ```bash
-python benchmark_training.py --device cpu --list-backends
+export QUANTOM_SYCL_VARIANT=acpp-a100
 python benchmark_training.py --device cuda --list-backends
 ```
 
-`make test` remains valid on machines with no SYCL installation: the SYCL tests
-skip when no SYCL core has been built. An explicitly requested unavailable
-benchmark reports a short error before trainer construction. Automation can use
-`--skip-unavailable` to turn that case into a successful skip instead.
+Without `QUANTOM_SYCL_VARIANT`, `sycl` is reported as unavailable and the
+message lists any complete variants found under `sycl/build/`. There is no
+automatic hardware or single-build fallback.
+
+`make test` remains valid on machines with no selected SYCL variant: the SYCL
+execution tests skip. `make test-sycl` requires `QUANTOM_SYCL_VARIANT`. An
+explicitly requested unavailable benchmark reports a short error before trainer
+construction; automation can use `--skip-unavailable` to turn that case into a
+successful skip instead.
 
 ## Correctness tests
 
@@ -149,6 +153,7 @@ Examples:
 python benchmark_training.py --backend torch --device cpu --events 100000
 python benchmark_training.py --backend cpp --device cpu --events 100000
 python benchmark_training.py --backend openmp --device cpu --events 100000
+QUANTOM_SYCL_VARIANT=acpp-a100 \
 python benchmark_training.py --backend sycl --device cuda --events 100000
 ```
 
@@ -190,9 +195,10 @@ python -m plotting.plot_breakdown results/training --events 1000000
 ```
 
 Scaling plots use medians and interquartile ranges. New CSVs also record an
-`implementation` field. For SYCL this contains the selected build variant such
-as `acpp:cuda` or `dpcpp:xpu`; this prevents measurements from different SYCL
-toolchains from overwriting or being merged while still retaining `backend=sycl`.
+`implementation` field. For SYCL this is the explicit `QUANTOM_SYCL_VARIANT`
+name, such as `acpp-a100` or `dpcpp-xpu`; this prevents measurements from
+different SYCL builds from overwriting or being merged while still retaining
+`backend=sycl`.
 
 ## SYCL interop model
 

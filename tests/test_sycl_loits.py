@@ -9,14 +9,19 @@ from pytorch.gan import GANTrainer
 from pytorch.loits import TorchLOITSCore
 from pytorch.profiler import TrainingProfiler
 from pytorch.theory import TorchProxyTheoryLite
-from sycl.backend import configured_torch_device, is_built, load_extension
+from sycl.backend import configured_torch_device, load_extension
 
 
-pytestmark = pytest.mark.skipif(not is_built(), reason="SYCL backend has not been built")
+pytestmark = pytest.mark.skipif(
+    "QUANTOM_SYCL_VARIANT" not in os.environ,
+    reason="QUANTOM_SYCL_VARIANT is not selected",
+)
 
 
 def sycl_device():
-    requested = os.environ.get("QUANTOM_SYCL_TEST_DEVICE", configured_torch_device())
+    requested = os.environ.get("QUANTOM_SYCL_TEST_DEVICE")
+    if requested is None:
+        requested = configured_torch_device()
     if requested == "cpu":
         return torch.device("cpu")
     if requested == "cuda":
