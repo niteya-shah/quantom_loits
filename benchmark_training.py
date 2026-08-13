@@ -1,8 +1,29 @@
 import argparse
+import os
+import re
 from pathlib import Path
 
+from loits import backend_status, registered_backends
 from pytorch.gan import GANTrainer
 from pytorch.profiler import RegionHooks, TrainingProfiler
+
+
+def safe_component(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value)).strip("-") or "run"
+
+
+def implementation_name(backend):
+    if backend != "sycl":
+        return backend
+    from sycl.backend import configured_toolchain
+
+    return configured_toolchain()
+
+
+def native_threads(backend):
+    if backend == "openmp":
+        return os.environ.get("OMP_NUM_THREADS", "")
+    return ""
 
 
 def run(args, profile_regions=False):
@@ -20,18 +41,45 @@ def run(args, profile_regions=False):
         hooks = RegionHooks(trainer.sampler.impl)
     profiler = TrainingProfiler(args.device)
     suffix = "regions" if profile_regions else "training"
-    trace = Path(args.output) / f"{args.backend}_{suffix}.json" if args.trace else None
+    implementation = implementation_name(args.backend)
+    threads = native_threads(args.backend)
+    stem = "_".join(
+        part
+        for part in [
+            suffix,
+            safe_component(implementation),
+            safe_component(args.device.replace(":", "-")),
+            str(args.events),
+            f"t{threads}" if threads else "",
+        ]
+        if part
+    )
+    trace = Path(args.output) / f"{stem}.json" if args.trace else None
     prof = profiler.run(trainer, args.warmup, args.iterations, trace)
-    rows = profiler.rows(prof, args.backend, args.device, args.events)
-    name = f"{suffix}_{args.backend}_{args.device.replace(':', '-')}_{args.events}.csv"
-    profiler.write_csv(Path(args.output) / name, rows)
+    rows = profiler.rows(
+        prof,
+        args.backend,
+        args.device,
+        args.events,
+        implementation=implementation,
+        threads=threads,
+    )
+    profiler.write_csv(Path(args.output) / f"{stem}.csv", rows)
     if hooks:
         hooks.close()
 
 
+def print_backends(device):
+    for backend in registered_backends():
+        ok, reason = backend_status(backend, device)
+        state = "available" if ok else "unavailable"
+        suffix = "" if ok or not reason else f": {reason}"
+        print(f"{backend:8s} {state}{suffix}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", default="torch", choices=["torch", "cpp", "openmp", "sycl"])
+    parser.add_argument("--backend", default="torch", choices=registered_backends())
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--events", type=int, default=10000)
     parser.add_argument("--grid-size", type=int, default=10)
@@ -41,7 +89,25 @@ def main():
     parser.add_argument("--output", default="results/training")
     parser.add_argument("--regions", action="store_true")
     parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--list-backends", action="store_true")
+    parser.add_argument(
+        "--skip-unavailable",
+        action="store_true",
+        help="print a skip message and exit successfully when the requested backend/device is unavailable",
+    )
     args = parser.parse_args()
+
+    if args.list_backends:
+        print_backends(args.device)
+        return
+
+    ok, reason = backend_status(args.backend, args.device)
+    if not ok:
+        message = f"backend={args.backend!r} unavailable for device={args.device!r}: {reason}"
+        if args.skip_unavailable:
+            print(f"SKIP: {message}")
+            return
+        parser.error(message)
 
     run(args, False)
     if args.regions:

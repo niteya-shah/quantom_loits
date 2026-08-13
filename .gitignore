@@ -1,17 +1,19 @@
-results
-memory_footprints.csv
-*.swp
-pixi.lock
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Native extension/build products
 *.so
-sycl/sycl-implementations
-__pycache__
-results_loits_performance_scans
-.ipynb_checkpoints
-.pixi-local-*
-
-
+*.o
 cpp/build/
-
 openmp/build/
-
 sycl/build/
+
+# Generated benchmark/profiler output
+results/
+
+# Local environment/editor state
+.pixi/
+pixi.lock
+*.swp

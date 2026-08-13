@@ -21,16 +21,57 @@ def core_library_path():
 
 
 def is_built():
-    return core_library_path().is_file()
+    build = _root() / "build"
+    return (
+        core_library_path().is_file()
+        and (build / "toolchain.txt").is_file()
+        and (build / "torch_device.txt").is_file()
+    )
 
 
-def configured_torch_device():
+def configured_toolchain():
+    marker = _root() / "build" / "toolchain.txt"
+    if marker.is_file():
+        value = marker.read_text().strip()
+        if value:
+            return value
+    return "sycl"
+
+
+def configured_torch_device_mode():
     marker = _root() / "build" / "torch_device.txt"
     if marker.is_file():
         value = marker.read_text().strip()
-        if value and value != "auto":
+        if value:
             return value
     return "cpu"
+
+
+def configured_torch_device():
+    value = configured_torch_device_mode()
+    return "cpu" if value == "auto" else value
+
+
+def availability(device="cpu"):
+    device = torch.device(device)
+    if not is_built():
+        return False, (
+            "SYCL core is not built; build one explicitly with "
+            "sycl/build-acpp.sh <target> or sycl/build-dpcpp.sh <target>"
+        )
+
+    configured = configured_torch_device_mode()
+    if configured != "auto" and configured != device.type:
+        return False, f"built SYCL target expects torch device {configured!r}, requested {device.type!r}"
+
+    if device.type == "cpu":
+        return True, ""
+    if device.type == "cuda":
+        return (True, "") if torch.cuda.is_available() else (False, "PyTorch CUDA/ROCm is not available")
+    if device.type == "xpu":
+        available = hasattr(torch, "xpu") and torch.xpu.is_available()
+        return (True, "") if available else (False, "PyTorch XPU is not available")
+    return False, f"unsupported torch device type {device.type!r}"
 
 
 def load_extension(verbose=False):

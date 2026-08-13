@@ -58,3 +58,14 @@ The semantic `loits::*` regions match the C++ and OpenMP backends. With
 `profile_regions=True`, the binding waits at each native region so its CPU wall
 time includes that SYCL kernel. The normal benchmark path waits only where a
 host scalar is required and at the end of forward/backward.
+
+## Optional backend behavior
+
+A SYCL build is intentionally optional. The backend is considered available
+only after the core library and its successful-build markers exist. Failed or
+partial rebuilds remove those markers, so `make test` will skip SYCL instead of
+attempting to load a stale core. Use:
+
+    python benchmark_training.py --device <cpu|cuda|xpu> --list-backends
+
+to inspect availability without compiling or loading the SYCL extension.

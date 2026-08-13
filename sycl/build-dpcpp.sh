@@ -36,6 +36,11 @@ case "$MODE" in
 esac
 
 mkdir -p "$BUILD"
+if ! command -v "$CXX" >/dev/null 2>&1; then
+  echo "SYCL compiler not found: $CXX" >&2
+  exit 127
+fi
+rm -f "$BUILD/libquantom_loits_sycl.so" "$BUILD/toolchain.txt" "$BUILD/torch_device.txt"
 read -r -a EXTRA <<< "${SYCL_EXTRA_FLAGS:-}"
 
 "$CXX" \
@@ -47,7 +52,7 @@ read -r -a EXTRA <<< "${SYCL_EXTRA_FLAGS:-}"
   -Wl,-soname,libquantom_loits_sycl.so \
   -o "$BUILD/libquantom_loits_sycl.so"
 
-printf '%s\n' "dpcpp:$MODE" > "$BUILD/toolchain.txt"
-printf '%s\n' "$TORCH_DEVICE" > "$BUILD/torch_device.txt"
 rm -f "$BUILD"/quantom_loits_sycl_binding*.so "$BUILD"/bindings.o "$BUILD"/build.ninja "$BUILD"/lock
 (cd "$ROOT" && python -m sycl.build)
+printf '%s\n' "dpcpp:$MODE" > "$BUILD/toolchain.txt"
+printf '%s\n' "$TORCH_DEVICE" > "$BUILD/torch_device.txt"

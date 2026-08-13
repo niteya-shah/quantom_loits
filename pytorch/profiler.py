@@ -90,7 +90,7 @@ class TrainingProfiler:
         return prof
 
     @staticmethod
-    def rows(prof, backend, device, n_events):
+    def rows(prof, backend, device, n_events, implementation=None, threads=""):
         rows = []
         occurrences = {}
 
@@ -112,8 +112,10 @@ class TrainingProfiler:
             rows.append(
                 {
                     "backend": backend,
+                    "implementation": implementation or backend,
                     "device": str(device),
                     "events": n_events,
+                    "threads": threads,
                     "region": event.name,
                     "occurrence": occurrence,
                     "event_id": event.id,

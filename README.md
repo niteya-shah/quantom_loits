@@ -1,349 +1,207 @@
-# QuantOm: Performance vs Productivity in HPC
+# QuantOm LOITS
 
-This repository contains the artifact accompanying the paper:
+This repository contains the active differentiable LOITS implementations used
+for the PyTorch/C++/OpenMP/SYCL performance study. The current codebase focuses
+on end-to-end training, native forward/backward execution, correctness, and
+profiling. Historical conference-artifact implementations, archived results, and old
+toolchain installers are intentionally not kept in the active tree; they
+remain available through Git history. The active plotting tools have been
+rewritten for the current training/profiler CSV format.
 
-**"On the Efficacy of PyTorch for High-Performance Computing: A Case Study in Computational Physics"**
+## Backends
 
-It provides:
-- implementations of the LOITS algorithm in PyTorch, C++, OpenMP, and SYCL
-- scripts to reproduce all figures from the paper
-- infrastructure to rerun experiments on new systems
-
----
-
-## Differentiable training benchmark
-
-The active PyTorch implementation now lives in `pytorch/`. LOITS is selected through a common backend interface:
+The common Python interface is:
 
 ```python
 from loits import LOITS
 
-sampler = LOITS(backend="torch", device="cuda")
+sampler = LOITS(backend="torch", device="cpu")
 events = sampler(theory_outputs, n_events)
 ```
 
-The same interface is active for `cpp`, `openmp`, and `sycl`.
+Available backends are:
 
-PyTorch training uses default `torch.compile(...)`. Backward compilation is provided by AOTAutograd. The stream-compaction behavior of the original LOITS implementation is preserved.
+- `torch`: PyTorch implementation with autograd and `torch.compile` support.
+- `cpp`: serial C++17 CPU implementation with a hand-written reverse VJP.
+- `openmp`: OpenMP CPU implementation with a hand-written reverse VJP.
+- `sycl`: one SYCL implementation compiled for different SYCL toolchains and
+  targets, also with a hand-written reverse VJP.
 
-Run the end-to-end GAN benchmark with:
+C++, OpenMP, and SYCL use the same Philox4x32-10 counter-based RNG mapping so
+native random streams can be compared exactly for a fixed seed and sequence.
 
-```bash
-python benchmark_training.py --backend torch --device cuda --events 100000
-python benchmark_training.py --backend cpp --device cpu --events 100000
-python benchmark_training.py --backend openmp --device cpu --events 100000
-python benchmark_training.py --backend sycl --device cuda --events 100000
+## Repository layout
+
+```text
+benchmark_training.py       end-to-end GAN benchmark/profiler
+loits.py                    backend selection
+rng/philox.hpp              shared native Philox implementation
+
+pytorch/                    PyTorch LOITS, theory, GAN, profiler
+cpp/                        serial C++ backend
+openmp/                     OpenMP backend
+sycl/                       single-source SYCL backend and build scripts
+tests/                      correctness, autograd, RNG, profiler tests
+plotting/                   current scaling, speedup, and breakdown plots
 ```
 
-Add semantic LOITS region profiling and a Chrome trace with:
+Generated native extensions live under each backend's `build/` directory.
+Benchmark CSVs and traces are written under `results/`. Both are ignored by
+Git.
 
-```bash
-python benchmark_training.py --backend torch --device cuda --events 100000 --regions --trace
-python benchmark_training.py --backend cpp --device cpu --events 100000 --regions --trace
-```
+## Environment
 
-The C++ backend is a CPU-only PyTorch C++ extension. It consumes PyTorch tensors directly, preserves LOITS stream compaction, and implements a hand-written reverse-mode VJP for the continuous `xsec -> rho -> CDF -> interpolation -> events` path. Random samples, allocation counts, interval selection, acceptance, and compaction decisions are fixed during the reverse pass. Forward intermediates required by the VJP are saved rather than recomputed.
-
-C++ profiling uses PyTorch C++ user scopes, so the same `torch.profiler` session captures native `rho`, `CDF`, interpolation, stream-compaction, and backward-VJP regions alongside the GAN-level ranges.
-
-`training_*.csv` contains profiler-derived end-to-end discriminator, generator, and full training-iteration timings. `regions_*.csv` contains forward/backward LOITS region timings collected through PyTorch hooks or native C++ profiler scopes. Warmup iterations occur before profiling so compilation is excluded from steady-state measurements.
-
-Check graph capture and the AOTAutograd path with:
-
-```bash
-python -m pytorch.compile_check
-```
-
-# 🚀 Quick Start (Recommended)
-
-To reproduce all figures from the paper:
-
-```bash
-make
-```
-
-This will:
-- copy `archived-results/` → `results/` (if needed)
-- regenerate all figures into `images/`
-
-⚠️ This does **NOT** rerun experiments. It uses archived data shipped with the artifact.
-
----
-
-# ⚙️ Environment Setup (pixi)
-
-This project uses **pixi** for environment management.
-
-## Install pixi
-
-```bash
-curl -fsSL https://pixi.sh/install.sh | bash
-```
-
-## Create and activate environment
+A minimal Pixi environment is provided for Python build/test dependencies:
 
 ```bash
 pixi install
 pixi shell
 ```
 
-This will:
-- create the environment defined in `pixi.toml`
-- install all required dependencies
-- ensure consistent versions across systems
+Install the PyTorch distribution appropriate for the machine separately. C++
+and OpenMP also require a system compiler. SYCL requires either AdaptiveCpp or
+an appropriate DPC++/oneAPI/LLVM SYCL toolchain.
 
----
+## Build
 
-# Reproducing Figures
-
-Generated figures are written to:
-
-```
-images/
-```
-
-These correspond to:
-
-- `strong_scaling.png`
-- `weak_scaling.png`
-- `cpu_scaling.png`
-- `gpu_scaling.png`
-- `stacked_barplot_cpu.pdf`
-- `stacked_barplot_gpu.pdf`
-
----
-
-# Running Experiments
-
-The archived forward-only scaling data remain available for reproducing the conference figures. New differentiable measurements should use `benchmark_training.py`; the old forward-only Python benchmark has been removed.
-
----
-
-# Results Layout
-
-The artifact separates **archived paper results** from **working results**:
-
-```
-archived-results/   # results used in the paper (read-only)
-results/            # working directory for regenerated or new results
-```
-
-Behavior:
-- `make` → uses `results/` (bootstrapped from `archived-results/` if needed)
-- `make rerun-*` → overwrites data inside `results/`
-
-This ensures:
-- paper results remain untouched
-- new experiments do not clobber original data
-
----
-
-# Build System
-
-Backends are built automatically when needed. The C++ backend can also be built directly with:
+Serial C++ and OpenMP:
 
 ```bash
 make build-cpp
-# or
-python -m cpp.build
+make build-openmp
 ```
 
-The C++ and OpenMP extensions use `torch.utils.cpp_extension` and write local build products under their backend directories. The active SYCL backend is in `sycl/`: `loits_core.cpp` is one SYCL implementation compiled by the selected AdaptiveCpp or DPC++ build script, while `bindings.cpp` is a thin Torch tensor/autograd boundary. The previous matrix/host-staging SYCL implementation has been removed.
+The SYCL backend has one `sycl/loits_core.cpp`. The Bash build scripts compile
+that same source for the requested implementation/target.
 
-Build one SYCL variant before using `backend="sycl"`, for example:
+AdaptiveCpp:
 
 ```bash
 ./sycl/build-acpp.sh generic
+./sycl/build-acpp.sh cpu
 ./sycl/build-acpp.sh cuda
+./sycl/build-acpp.sh hip
+```
+
+DPC++:
+
+```bash
+./sycl/build-dpcpp.sh cpu
 ./sycl/build-dpcpp.sh xpu
 ./sycl/build-dpcpp.sh cuda
 ./sycl/build-dpcpp.sh hip
 ```
 
-See `sycl/README.md` for runtime device selection and test instructions.
-
----
-
-# Backends
-
-Available backends are detected via:
+Equivalent top-level Make targets are available, for example:
 
 ```bash
-./setup-backends.sh
+make build-sycl-acpp-cuda
+make build-sycl-dpcpp-xpu
 ```
 
-Typical configurations include:
-- CPU (OpenMP, TBB)
-- CUDA
-- HIP
-- Level Zero (XPU)
+Compiler paths and device architecture flags can be overridden using the
+environment variables documented in `sycl/README.md`.
 
----
+## Backend availability
 
-# Notes on DPC++ CPU (TBB)
-
-On some systems, the DPC++ CPU backend requires the runtime library path to be visible.
-
-This is handled automatically in the provided scripts, but if issues occur, ensure:
-
-```
-<repo>/sycl/sycl-implementations/<host>/dpc++-cpu/lib
-```
-
-is present in `LD_LIBRARY_PATH`.
-
----
-
-# Notebook (Optional)
-
-A companion Jupyter notebook (`artifact_walkthrough.ipynb`) is provided to:
-
-- visualise generated figures
-- demonstrate the workflow interactively
-
-If using Jupyter:
+SYCL is optional. `make build` and `make build-all` build only the portable
+PyTorch/C++/OpenMP side; SYCL builds are always explicit because the compiler
+and target differ by machine. Inspect the current device/backend status with:
 
 ```bash
-pixi run python -m pip install "notebook<7"
-pixi run jupyter notebook
+python benchmark_training.py --device cpu --list-backends
+python benchmark_training.py --device cuda --list-backends
 ```
 
-(BeakerX is not required.)
+`make test` remains valid on machines with no SYCL installation: the SYCL tests
+skip when no SYCL core has been built. An explicitly requested unavailable
+benchmark reports a short error before trainer construction. Automation can use
+`--skip-unavailable` to turn that case into a successful skip instead.
 
----
+## Correctness tests
 
-# Cleaning
+Run the complete suite:
 
 ```bash
-make clean
+python -m pytest -q tests
 ```
 
-Removes compiled artifacts.
-
----
-
-# 🧠 What This Artifact Demonstrates
-
-This artifact supports the paper’s key findings:
-
-- PyTorch is **4–5× more productive** (SLOC)
-- CPU performance:
-  - PyTorch achieves ~50–72% of optimized C++/OpenMP
-- GPU performance:
-  - PyTorch outperforms SYCL by:
-    - ~5–6× (CUDA)
-    - ~15× (HIP)
-    - up to ~16× (Intel XPU)
-
-These results arise from:
-- kernel fusion
-- optimized backend primitives (e.g., CUB)
-- reduced synchronization overhead
-
----
-
-# 📊 Experiments Included
-
-- Strong scaling (CPU threads)
-- Weak scaling (per-core workload)
-- Fixed-resource scaling (CPU + GPU)
-- Profiling breakdown of LOITS pipeline
-
----
-
-# 📁 Repository Structure
-
-```
-.
-├── pytorch/             # PyTorch LOITS, theory, GAN benchmark, profiler
-├── loits.py             # uniform backend interface
-├── benchmark_training.py# end-to-end differentiable benchmark
-├── cpp/                 # C++ implementation
-├── omp/                 # OpenMP implementation
-├── sycl/                # SYCL implementations + installer
-├── examples/            # Jupyter notebooks
-├── archived-results/    # paper results
-├── results/             # working results
-├── images/              # generated figures
-├── utils/               # plotting scripts
-├── setup-backends.sh    # environment configuration
-├── utils.sh             # logging helpers
-└── Makefile
-```
-
----
-
-# 📓 Example Usage (Notebook)
-
-To explore LOITS interactively:
+or individual backends:
 
 ```bash
-cd examples/2d_loits
-pixi run jupyter notebook
+make test-pytorch
+make test-cpp
+make test-openmp
+make test-sycl
+make test-rng
 ```
 
----
+The native-backend correctness tests compare forward results and the
+hand-written reverse VJP against the PyTorch reference while holding the
+stochastic samples fixed. RNG tests additionally compare native Philox streams
+exactly. SYCL tests skip when a SYCL core has not been built.
 
-# ⚠️ Notes on Reproducibility
+## Training benchmark
 
-- GPU results depend on:
-  - CUDA / ROCm / Level Zero versions
-  - hardware (A100, MI300A, Intel Max)
-- CPU scaling depends on:
-  - NUMA configuration
-  - thread pinning
+Examples:
 
-We attempt to normalize this via:
-- fixed seeds
-- explicit thread control
-- consistent build flags
-
----
-
-# 🛠 Troubleshooting
-
-### DPC++ / TBB issues
-Ensure TBB is correctly built and linked:
-```
-sycl-implementations/<host>/tbb/
-```
-
-### CUDA / HIP not detected
-Check:
 ```bash
-echo $BACKENDS
-echo $CUDA_PATH
-echo $ROCM_PATH
+python benchmark_training.py --backend torch --device cpu --events 100000
+python benchmark_training.py --backend cpp --device cpu --events 100000
+python benchmark_training.py --backend openmp --device cpu --events 100000
+python benchmark_training.py --backend sycl --device cuda --events 100000
 ```
 
-### Build failures
-Try:
+The Makefile exposes the same benchmark with configurable variables:
+
 ```bash
-make reinstall
+make benchmark BACKEND=openmp DEVICE=cpu EVENTS=1000000 ITERATIONS=10
 ```
 
----
+For the detailed semantic region trace:
 
-# 📜 License (MIT)
-
-Copyright 2026 Beau Johnston <beau@inbeta.org>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
-
----
-
-# 📎 Citation
-
-If you use this artifact, please cite:
-
+```bash
+make profile BACKEND=openmp DEVICE=cpu EVENTS=1000000 ITERATIONS=10
 ```
-Beau Johnston, Niteya Shah, Wu-chun Feng.
-"On the Efficacy of PyTorch for High-Performance Computing:
-A Case Study in Computational Physics."
-Proceedings of the 23rd ACM International Conference on Computing Frontiers (CF 26')
-10.1145/3801487.3801838
+
+The native backends expose the same hierarchical `loits::*` profiler names so
+forward/backward stages can be compared directly.
+
+## Plotting
+
+Current plotting tools live under `plotting/` and consume the CSVs emitted by
+`benchmark_training.py`. They discover only the series that are present, so a
+CPU-only machine does not need placeholder SYCL/CUDA/XPU results.
+
+Generate the standard available plots with:
+
+```bash
+make plots
 ```
+
+or individually:
+
+```bash
+python -m plotting.plot_training results/training
+python -m plotting.plot_loits results/training --scope autograd-forward
+python -m plotting.plot_loits results/training --scope autograd-backward
+python -m plotting.plot_speedup results/training --reference cpp
+python -m plotting.plot_breakdown results/training --events 1000000
+```
+
+Scaling plots use medians and interquartile ranges. New CSVs also record an
+`implementation` field. For SYCL this contains the selected build variant such
+as `acpp:cuda` or `dpcpp:xpu`; this prevents measurements from different SYCL
+toolchains from overwriting or being merged while still retaining `backend=sycl`.
+
+## SYCL interop model
+
+PyTorch owns the input, output, and saved-autograd tensors. The SYCL binding
+passes their raw device pointers to the single SYCL implementation. The current
+interop path intentionally synchronizes PyTorch before entering SYCL and waits
+for the SYCL queue before returning to PyTorch. This prioritizes correctness
+and zero-copy tensor storage over asynchronous stream overlap and avoids the
+host/NumPy staging used by the retired implementation.
+
+The selected SYCL device must correspond to the PyTorch tensor device. See
+`sycl/README.md` for runtime selector and build details.

@@ -1,235 +1,146 @@
-.PHONY: all plot plot-strong plot-weak plot-frs \
-        install reinstall \
-        env env-pytorch env-check bootstrap bootstrap-all \
-        preflight rebuild rebuild-cpp rebuild-omp rebuild-sycl \
-        build build-cpp build-omp build-openmp build-sycl \
-        build-sycl-acpp build-sycl-tbb build-sycl-cuda build-sycl-hip build-sycl-xpu \
-        rerun rerun-strong rerun-weak rerun-frs \
-        rerun-frs-cpu rerun-frs-cuda rerun-frs-hip rerun-frs-xpu \
-        clean clean-cpp clean-omp clean-openmp clean-sycl \
-        smoke scaling profile debug \
-        test test-pytorch test-cpp test-omp test-openmp test-sycl \
-        test-omp-basic test-omp-instrument test-omp-flto test-omp-instrument-flto \
-        test-sycl-acpp test-sycl-acpp-omp test-sycl-acpp-cuda \
-        test-sycl-dpcpp-cuda test-sycl-dpcpp-hip test-sycl-usy \
-        benchmark-training profile-training compile-check
-
 SHELL := /usr/bin/env bash
-PIXI_RUN := ./setup-pixi.sh run
+
+PYTHON ?= python
 BACKEND ?= torch
 DEVICE ?= cpu
-EVENTS ?= 10000
+EVENTS ?= 100000
+GRID_SIZE ?= 10
+WARMUP ?= 5
 ITERATIONS ?= 10
+SEED ?= 0
+SYCL_TARGET ?= generic
 
-# Default: regenerate figures from results/ only
-all: plot
+.PHONY: all \
+        build build-all build-cpp build-openmp \
+        build-sycl-acpp build-sycl-dpcpp \
+        build-sycl-acpp-generic build-sycl-acpp-cpu build-sycl-acpp-cuda build-sycl-acpp-hip \
+        build-sycl-dpcpp-cpu build-sycl-dpcpp-xpu build-sycl-dpcpp-cuda build-sycl-dpcpp-hip \
+        test test-pytorch test-cpp test-openmp test-sycl test-rng \
+        benchmark profile list-backends compile-check \
+        plots plot-training plot-loits plot-breakdown \
+        clean clean-cpp clean-openmp clean-sycl clean-results
 
-# -------------------------
-# Plotting
-# -------------------------
+all: test
 
-plot: plot-strong plot-weak plot-frs
+# C++ and OpenMP use torch.utils.cpp_extension and build on demand.
+build: build-cpp build-openmp
 
-plot-strong:
-	./plot_strong_scaling.sh
-
-plot-weak:
-	./plot_weak_scaling.sh
-
-plot-frs:
-	./plot_fixed_resource_and_stacked.sh
-
-# -------------------------
-# Pixi / Python environment
-# -------------------------
-
-env:
-	./setup-pixi.sh install
-
-env-pytorch: env
-	./setup-pytorch.sh
-
-env-check: env-pytorch
-	./setup-pixi.sh run python -c "import sys, torch; print(sys.executable); print(torch.__version__)"
-
-bootstrap: env-pytorch build
-
-bootstrap-all: env-pytorch build plot
-
-# -------------------------
-# Toolchain install / preflight
-# -------------------------
-
-install:
-	cd sycl && ./install.sh
-
-reinstall:
-	cd sycl && REINSTALL=1 ./install.sh
-
-# Run before any rerun experiment:
-# - ensure pixi exists
-# - ensure torch wheels are installed
-# - ensure SYCL toolchains/backends are installed for this host
-preflight: env-pytorch install
-
-# Force a fresh rebuild from scratch after install.
-rebuild: preflight clean build
-
-rebuild-cpp: preflight clean-cpp build-cpp
-rebuild-omp: preflight clean-omp build-omp
-rebuild-sycl: preflight clean-sycl build-sycl
-
-# -------------------------
-# Build Python wrappers
-# -------------------------
-
-build: build-cpp build-omp build-sycl
+# SYCL requires an explicitly selected external compiler/target, so it is not
+# part of the portable build-all target. Use one of the build-sycl-* targets.
+build-all: build-cpp build-openmp
+	@echo "SYCL not built automatically; select an explicit build-sycl-* target if available."
 
 build-cpp:
-	$(PIXI_RUN) python -m cpp.build
-
-build-omp: build-openmp
+	$(PYTHON) -m cpp.build
 
 build-openmp:
-	$(PIXI_RUN) python -m openmp.build
+	$(PYTHON) -m openmp.build
 
-build-sycl: build-sycl-acpp
-
+# Generic SYCL entry points. Override SYCL_TARGET as needed, e.g.
+#   make build-sycl-acpp SYCL_TARGET=cuda
+#   make build-sycl-dpcpp SYCL_TARGET=xpu
 build-sycl-acpp:
-	$(PIXI_RUN) ./sycl/build-acpp.sh generic
+	./sycl/build-acpp.sh $(SYCL_TARGET)
 
-build-sycl-tbb:
-	$(PIXI_RUN) ./sycl/build-dpcpp.sh cpu
+build-sycl-dpcpp:
+	./sycl/build-dpcpp.sh $(SYCL_TARGET)
 
-build-sycl-cuda:
-	$(PIXI_RUN) ./sycl/build-dpcpp.sh cuda
+build-sycl-acpp-generic:
+	./sycl/build-acpp.sh generic
 
-build-sycl-hip:
-	$(PIXI_RUN) ./sycl/build-dpcpp.sh hip
+build-sycl-acpp-cpu:
+	./sycl/build-acpp.sh cpu
 
-build-sycl-xpu:
-	$(PIXI_RUN) ./sycl/build-dpcpp.sh xpu
+build-sycl-acpp-cuda:
+	./sycl/build-acpp.sh cuda
 
-# -------------------------
-# Rerun experiments into results/
-# -------------------------
+build-sycl-acpp-hip:
+	./sycl/build-acpp.sh hip
 
-rerun: rerun-strong rerun-weak rerun-frs
+build-sycl-dpcpp-cpu:
+	./sycl/build-dpcpp.sh cpu
 
-# Strong/weak scaling are CPU-side paths.
-# Use rebuild so we do:
-#   install -> clean -> rebuild -> rerun
-rerun-strong: rebuild
-	DORUN=1 ./plot_strong_scaling.sh
+build-sycl-dpcpp-xpu:
+	./sycl/build-dpcpp.sh xpu
 
-rerun-weak: rebuild
-	DORUN=1 ./plot_weak_scaling.sh
+build-sycl-dpcpp-cuda:
+	./sycl/build-dpcpp.sh cuda
 
-# FRS may additionally rebuild backend-specific DPC++ wrappers in-script,
-# but we still want a clean installed baseline first.
-rerun-frs: rebuild
-	DORUN=1 ./plot_fixed_resource_and_stacked.sh
+build-sycl-dpcpp-hip:
+	./sycl/build-dpcpp.sh hip
 
-# Optional explicit per-backend entry points
-rerun-frs-cpu: rebuild
-	DORUN=1 ./plot_fixed_resource_and_stacked.sh
-
-rerun-frs-cuda: rebuild
-	DORUN=1 FORCE_CUDA=1 ./plot_fixed_resource_and_stacked.sh
-
-rerun-frs-hip: rebuild
-	DORUN=1 FORCE_HIP=1 ./plot_fixed_resource_and_stacked.sh
-
-rerun-frs-xpu: rebuild
-	DORUN=1 FORCE_XPU=1 ./plot_fixed_resource_and_stacked.sh
-
-
-# -------------------------
-# Differentiable training benchmark
-# -------------------------
-
-benchmark-training:
-	$(PIXI_RUN) python benchmark_training.py --backend $(BACKEND) --device $(DEVICE) --events $(EVENTS) --iterations $(ITERATIONS)
-
-profile-training:
-	$(PIXI_RUN) python benchmark_training.py --backend $(BACKEND) --device $(DEVICE) --events $(EVENTS) --iterations $(ITERATIONS) --regions --trace
-
-compile-check:
-	$(PIXI_RUN) python -m pytorch.compile_check
-
-# -------------------------
-# Tests
-# -------------------------
-
-test: env test-pytorch test-cpp test-omp test-sycl
+# test_sycl_loits.py skips when no SYCL core has been built.
+test:
+	$(PYTHON) -m pytest -q tests
 
 test-pytorch:
-	$(PIXI_RUN) python -m pytest -q tests
+	$(PYTHON) -m pytest -q tests/test_pytorch_loits.py tests/test_profiler.py
 
 test-cpp:
-	$(PIXI_RUN) python -m pytest -q tests/test_cpp_loits.py
-
-test-omp: test-openmp
+	$(PYTHON) -m pytest -q tests/test_cpp_loits.py
 
 test-openmp:
-	$(PIXI_RUN) python -m pytest -q tests/test_openmp_loits.py
-
-test-omp-basic:
-	$(PIXI_RUN) make -C omp omp_test
-
-test-omp-instrument:
-	$(PIXI_RUN) make -C omp omp_instrument
-
-test-omp-flto:
-	$(PIXI_RUN) make -C omp omp_test_flto
-
-test-omp-instrument-flto:
-	$(PIXI_RUN) make -C omp omp_instrument_flto
+	$(PYTHON) -m pytest -q tests/test_openmp_loits.py
 
 test-sycl:
-	$(PIXI_RUN) python -m pytest -q tests/test_sycl_loits.py
+	$(PYTHON) -m pytest -q tests/test_sycl_loits.py
 
-test-sycl-acpp: test-sycl
+test-rng:
+	$(PYTHON) -m pytest -q tests/test_native_rng.py
 
-test-sycl-acpp-omp: test-sycl
-
-test-sycl-acpp-cuda: test-sycl
-
-test-sycl-dpcpp-cuda: test-sycl
-
-test-sycl-dpcpp-hip: test-sycl
-
-test-sycl-usy: test-sycl
-
-# -------------------------
-# Legacy helper scripts
-# -------------------------
-
-smoke:
-	./run.sh --smoke
-
-scaling:
-	./run_omp_thread_scaling.sh
+benchmark:
+	$(PYTHON) benchmark_training.py \
+		--backend $(BACKEND) \
+		--device $(DEVICE) \
+		--events $(EVENTS) \
+		--grid-size $(GRID_SIZE) \
+		--warmup $(WARMUP) \
+		--iterations $(ITERATIONS) \
+		--seed $(SEED)
 
 profile:
-	./profile_2dloits_performance.sh
+	$(PYTHON) benchmark_training.py \
+		--backend $(BACKEND) \
+		--device $(DEVICE) \
+		--events $(EVENTS) \
+		--grid-size $(GRID_SIZE) \
+		--warmup $(WARMUP) \
+		--iterations $(ITERATIONS) \
+		--seed $(SEED) \
+		--regions \
+		--trace
 
-debug:
-	./debug.sh
+list-backends:
+	$(PYTHON) benchmark_training.py --device $(DEVICE) --list-backends
 
-# -------------------------
-# Cleanup
-# -------------------------
+plots:
+	$(PYTHON) -m plotting.plot_all --input results/training
 
-clean: clean-cpp clean-omp clean-sycl
+plot-training:
+	$(PYTHON) -m plotting.plot_training results/training
+
+plot-loits:
+	$(PYTHON) -m plotting.plot_loits results/training --scope autograd-forward
+
+plot-breakdown:
+	$(PYTHON) -m plotting.plot_breakdown results/training --events $(EVENTS)
+
+compile-check:
+	$(PYTHON) -m pytorch.compile_check
+
+clean: clean-cpp clean-openmp clean-sycl
+	find . -type d -name __pycache__ -prune -exec rm -rf {} +
+	rm -rf .pytest_cache
 
 clean-cpp:
 	rm -rf cpp/build
-
-clean-omp: clean-openmp
 
 clean-openmp:
 	rm -rf openmp/build
 
 clean-sycl:
 	rm -rf sycl/build
+
+# Results are intentionally not removed by `make clean`.
+clean-results:
+	rm -rf results

@@ -1,5 +1,5 @@
 [workspace]
-authors = ["Beau Johnston <johnstonbe@ornl.gov>"]
+authors = ["Niteya Shah <niteya@vt.edu>", "Beau Johnston <johnstonbe@ornl.gov>"]
 channels = ["conda-forge"]
 name = "quantom"
 platforms = ["linux-64"]
@@ -7,35 +7,8 @@ version = "0.1.0"
 
 [dependencies]
 python = "3.10.*"
-setuptools = ">=80.9.0,<81"
 pip = "*"
-numpy = "*"
-pyyaml = ">=6.0.3,<7"
-pydot = ">=4.0.1,<5"
-pybind11 = ">=3.0.1,<4"
-matplotlib = ">=3.7"
-scipy = ">=1.8"
-locate = ">=1.1.1,<2"
-xclip = ">=0.13,<0.14"
-six = ">=1.17.0,<2"
-pytz = ">=2025.2,<2026"
-ninja = ">=1.13.2,<2"
-ipython = ">=8.37.0,<9"
-beakerx = ">=1.4.1,<2"
-notebook = "7.0.*"
+setuptools = ">=80,<81"
+ninja = ">=1.13,<2"
 pytest = ">=8,<9"
-
-[tasks]
-install-pytorch-cuda = """
-python -m pip install \
-  torch==2.6.0 \
-  torchvision==0.21.0 \
-  torchaudio==2.6.0 \
-  --index-url https://download.pytorch.org/whl/cu124
-"""
-
-install-pytorch-hip = """
-python -m pip install \
-  torch torchvision torchaudio \
-  --index-url https://download.pytorch.org/whl/rocm6.1
-"""
+matplotlib = ">=3.8,<4"
