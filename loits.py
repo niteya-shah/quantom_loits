@@ -26,6 +26,15 @@ def _load_cpp(**kwargs):
 register_backend("cpp", _load_cpp)
 
 
+def _load_openmp(**kwargs):
+    from openmp.backend import OpenMPLOITS
+
+    return OpenMPLOITS(**kwargs)
+
+
+register_backend("openmp", _load_openmp)
+
+
 class LOITS(nn.Module):
     def __init__(self, backend="torch", **kwargs):
         super().__init__()

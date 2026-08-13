@@ -2,13 +2,13 @@
         install reinstall \
         env env-pytorch env-check bootstrap bootstrap-all \
         preflight rebuild rebuild-cpp rebuild-omp rebuild-sycl \
-        build build-cpp build-omp build-sycl \
+        build build-cpp build-omp build-openmp build-sycl \
         build-sycl-acpp build-sycl-tbb build-sycl-cuda build-sycl-hip build-sycl-xpu \
         rerun rerun-strong rerun-weak rerun-frs \
         rerun-frs-cpu rerun-frs-cuda rerun-frs-hip rerun-frs-xpu \
-        clean clean-cpp clean-omp clean-sycl \
+        clean clean-cpp clean-omp clean-openmp clean-sycl \
         smoke scaling profile debug \
-        test test-pytorch test-cpp test-omp test-sycl \
+        test test-pytorch test-cpp test-omp test-openmp test-sycl \
         test-omp-basic test-omp-instrument test-omp-flto test-omp-instrument-flto \
         test-sycl-acpp test-sycl-acpp-omp test-sycl-acpp-cuda \
         test-sycl-dpcpp-cuda test-sycl-dpcpp-hip test-sycl-usy \
@@ -88,8 +88,10 @@ build: build-cpp build-omp build-sycl
 build-cpp:
 	$(PIXI_RUN) python -m cpp.build
 
-build-omp:
-	$(PIXI_RUN) make -C omp CXX=g++ CC=gcc
+build-omp: build-openmp
+
+build-openmp:
+	$(PIXI_RUN) python -m openmp.build
 
 build-sycl: build-sycl-acpp build-sycl-tbb
 
@@ -167,7 +169,10 @@ test-pytorch:
 test-cpp:
 	$(PIXI_RUN) python -m pytest -q tests/test_cpp_loits.py
 
-test-omp: test-omp-basic
+test-omp: test-openmp
+
+test-openmp:
+	$(PIXI_RUN) python -m pytest -q tests/test_openmp_loits.py
 
 test-omp-basic:
 	$(PIXI_RUN) make -C omp omp_test
@@ -226,8 +231,10 @@ clean: clean-cpp clean-omp clean-sycl
 clean-cpp:
 	rm -rf cpp/build
 
-clean-omp:
-	$(PIXI_RUN) make -C omp clean
+clean-omp: clean-openmp
+
+clean-openmp:
+	rm -rf openmp/build
 
 clean-sycl:
 	$(PIXI_RUN) make -C sycl clean

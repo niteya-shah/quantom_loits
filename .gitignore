@@ -11,3 +11,5 @@ results_loits_performance_scans
 
 
 cpp/build/
+
+openmp/build/
