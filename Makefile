@@ -17,7 +17,7 @@ SYCL_ARCH ?=
         build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
         test test-pytorch test-cpp test-openmp test-sycl test-rng \
         benchmark profile list-backends compile-check \
-        plots plot-training plot-loits plot-breakdown \
+        plots plot-cpu plot-gpu plot-ss plot-ws \
         clean clean-cpp clean-openmp clean-sycl clean-results
 
 all: test
@@ -114,14 +114,17 @@ list-backends:
 plots:
 	$(PYTHON) -m plotting.plot_all --input results/training
 
-plot-training:
-	$(PYTHON) -m plotting.plot_training results/training
+plot-cpu:
+	$(PYTHON) -m plotting.plot_cpu
 
-plot-loits:
-	$(PYTHON) -m plotting.plot_loits results/training --scope autograd-forward
+plot-gpu:
+	$(PYTHON) -m plotting.plot_gpu
 
-plot-breakdown:
-	$(PYTHON) -m plotting.plot_breakdown results/training --events $(EVENTS)
+plot-ss:
+	$(PYTHON) -m plotting.plot_ss
+
+plot-ws:
+	$(PYTHON) -m plotting.plot_ws
 
 compile-check:
 	$(PYTHON) -m pytorch.compile_check
