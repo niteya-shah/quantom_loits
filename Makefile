@@ -93,22 +93,22 @@ build-omp: build-openmp
 build-openmp:
 	$(PIXI_RUN) python -m openmp.build
 
-build-sycl: build-sycl-acpp build-sycl-tbb
+build-sycl: build-sycl-acpp
 
 build-sycl-acpp:
-	$(PIXI_RUN) make -C sycl CXX=g++ CC=gcc
+	$(PIXI_RUN) ./sycl/build-acpp.sh generic
 
 build-sycl-tbb:
-	$(PIXI_RUN) make -C sycl dpc++_for_tbb CXX=g++ CC=gcc
+	$(PIXI_RUN) ./sycl/build-dpcpp.sh cpu
 
 build-sycl-cuda:
-	$(PIXI_RUN) make -C sycl dpc++_for_cuda CXX=g++ CC=gcc
+	$(PIXI_RUN) ./sycl/build-dpcpp.sh cuda
 
 build-sycl-hip:
-	$(PIXI_RUN) make -C sycl dpc++_for_hip CXX=g++ CC=gcc
+	$(PIXI_RUN) ./sycl/build-dpcpp.sh hip
 
 build-sycl-xpu:
-	$(PIXI_RUN) make -C sycl dpc++_for_spirv CXX=g++ CC=gcc
+	$(PIXI_RUN) ./sycl/build-dpcpp.sh xpu
 
 # -------------------------
 # Rerun experiments into results/
@@ -186,25 +186,20 @@ test-omp-flto:
 test-omp-instrument-flto:
 	$(PIXI_RUN) make -C omp omp_instrument_flto
 
-test-sycl: test-sycl-acpp test-sycl-dpcpp-cuda test-sycl-dpcpp-hip
+test-sycl:
+	$(PIXI_RUN) python -m pytest -q tests/test_sycl_loits.py
 
-test-sycl-acpp:
-	$(PIXI_RUN) make -C sycl sycl_test_acpp
+test-sycl-acpp: test-sycl
 
-test-sycl-acpp-omp:
-	$(PIXI_RUN) make -C sycl sycl_test_acpp_omp
+test-sycl-acpp-omp: test-sycl
 
-test-sycl-acpp-cuda:
-	$(PIXI_RUN) make -C sycl sycl_test_acpp_cud
+test-sycl-acpp-cuda: test-sycl
 
-test-sycl-dpcpp-cuda:
-	$(PIXI_RUN) make -C sycl sycl_test_dpcpp_cuda
+test-sycl-dpcpp-cuda: test-sycl
 
-test-sycl-dpcpp-hip:
-	$(PIXI_RUN) make -C sycl sycl_test_dpcpp_hip
+test-sycl-dpcpp-hip: test-sycl
 
-test-sycl-usy:
-	$(PIXI_RUN) make -C sycl sycl_test_usy
+test-sycl-usy: test-sycl
 
 # -------------------------
 # Legacy helper scripts
@@ -237,4 +232,4 @@ clean-openmp:
 	rm -rf openmp/build
 
 clean-sycl:
-	$(PIXI_RUN) make -C sycl clean
+	rm -rf sycl/build

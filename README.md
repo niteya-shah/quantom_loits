@@ -22,7 +22,7 @@ sampler = LOITS(backend="torch", device="cuda")
 events = sampler(theory_outputs, n_events)
 ```
 
-The same interface is active for `cpp`; `openmp` and `sycl` will follow the same contract.
+The same interface is active for `cpp`, `openmp`, and `sycl`.
 
 PyTorch training uses default `torch.compile(...)`. Backward compilation is provided by AOTAutograd. The stream-compaction behavior of the original LOITS implementation is preserved.
 
@@ -31,6 +31,8 @@ Run the end-to-end GAN benchmark with:
 ```bash
 python benchmark_training.py --backend torch --device cuda --events 100000
 python benchmark_training.py --backend cpp --device cpu --events 100000
+python benchmark_training.py --backend openmp --device cpu --events 100000
+python benchmark_training.py --backend sycl --device cuda --events 100000
 ```
 
 Add semantic LOITS region profiling and a Chrome trace with:
@@ -146,7 +148,19 @@ make build-cpp
 python -m cpp.build
 ```
 
-The C++ extension uses `torch.utils.cpp_extension` and writes its local build products to `cpp/build/`. The pre-existing OpenMP/SYCL code still uses `legacy/cpp_sampler.*` temporarily; the active C++ backend has no dependency on that legacy matrix/timing implementation.
+The C++ and OpenMP extensions use `torch.utils.cpp_extension` and write local build products under their backend directories. The active SYCL backend is in `sycl/`: `loits_core.cpp` is one SYCL implementation compiled by the selected AdaptiveCpp or DPC++ build script, while `bindings.cpp` is a thin Torch tensor/autograd boundary. The previous matrix/host-staging SYCL implementation has been removed.
+
+Build one SYCL variant before using `backend="sycl"`, for example:
+
+```bash
+./sycl/build-acpp.sh generic
+./sycl/build-acpp.sh cuda
+./sycl/build-dpcpp.sh xpu
+./sycl/build-dpcpp.sh cuda
+./sycl/build-dpcpp.sh hip
+```
+
+See `sycl/README.md` for runtime device selection and test instructions.
 
 ---
 

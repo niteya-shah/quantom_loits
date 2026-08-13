@@ -1,9 +1,10 @@
 #include "loits_core.hpp"
 
+#include "../rng/philox.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <random>
 
 namespace loits {
 namespace {
@@ -39,14 +40,16 @@ void fill_uniform(float* restrict values,
                   int64_t count,
                   uint64_t seed,
                   uint64_t stream) {
-  std::seed_seq seed_sequence{
-      static_cast<uint32_t>(seed),
-      static_cast<uint32_t>(seed >> 32),
-      static_cast<uint32_t>(stream),
-      static_cast<uint32_t>(stream >> 32)};
-  std::mt19937 generator(seed_sequence);
-  std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
-  for (int64_t i = 0; i < count; ++i) values[i] = distribution(generator);
+  const int64_t blocks = (count + 3) / 4;
+  for (int64_t block = 0; block < blocks; ++block) {
+    const auto random = quantom::rng::philox4x32_10(
+        static_cast<uint64_t>(block), stream, seed);
+    const int64_t base = block * 4;
+    if (base < count) values[base] = quantom::rng::uniform_float(random.x0);
+    if (base + 1 < count) values[base + 1] = quantom::rng::uniform_float(random.x1);
+    if (base + 2 < count) values[base + 2] = quantom::rng::uniform_float(random.x2);
+    if (base + 3 < count) values[base + 3] = quantom::rng::uniform_float(random.x3);
+  }
 }
 
 void density_x(const double* restrict bins,

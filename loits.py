@@ -35,6 +35,15 @@ def _load_openmp(**kwargs):
 register_backend("openmp", _load_openmp)
 
 
+def _load_sycl(**kwargs):
+    from sycl.backend import SYCLLOITS
+
+    return SYCLLOITS(**kwargs)
+
+
+register_backend("sycl", _load_sycl)
+
+
 class LOITS(nn.Module):
     def __init__(self, backend="torch", **kwargs):
         super().__init__()

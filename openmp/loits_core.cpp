@@ -1,9 +1,10 @@
 #include "loits_core.hpp"
 
+#include "../rng/philox.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <random>
 
 namespace openmp_loits {
 namespace {
@@ -53,22 +54,16 @@ void fill_uniform(float* restrict values,
                   int64_t count,
                   uint64_t seed,
                   uint64_t stream) {
-  constexpr int64_t block_size = 4096;
-  const int64_t blocks = (count + block_size - 1) / block_size;
+  const int64_t blocks = (count + 3) / 4;
 #pragma omp parallel for schedule(static)
   for (int64_t block = 0; block < blocks; ++block) {
-    std::seed_seq seed_sequence{
-        static_cast<uint32_t>(seed),
-        static_cast<uint32_t>(seed >> 32),
-        static_cast<uint32_t>(stream),
-        static_cast<uint32_t>(stream >> 32),
-        static_cast<uint32_t>(block),
-        static_cast<uint32_t>(static_cast<uint64_t>(block) >> 32)};
-    std::mt19937 generator(seed_sequence);
-    std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
-    const int64_t begin = block * block_size;
-    const int64_t end = std::min(begin + block_size, count);
-    for (int64_t i = begin; i < end; ++i) values[i] = distribution(generator);
+    const auto random = quantom::rng::philox4x32_10(
+        static_cast<uint64_t>(block), stream, seed);
+    const int64_t base = block * 4;
+    if (base < count) values[base] = quantom::rng::uniform_float(random.x0);
+    if (base + 1 < count) values[base + 1] = quantom::rng::uniform_float(random.x1);
+    if (base + 2 < count) values[base + 2] = quantom::rng::uniform_float(random.x2);
+    if (base + 3 < count) values[base + 3] = quantom::rng::uniform_float(random.x3);
   }
 }
 
