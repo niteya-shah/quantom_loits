@@ -145,6 +145,19 @@ hand-written reverse VJP against the PyTorch reference while holding the
 stochastic samples fixed. RNG tests additionally compare native Philox streams
 exactly. SYCL tests skip when a SYCL core has not been built.
 
+To print the actual forward and backward error metrics for a native backend:
+
+```bash
+python compare_backend_torch.py --backend cpp --events 100000
+OMP_NUM_THREADS=32 python compare_backend_torch.py --backend openmp --events 100000
+QUANTOM_SYCL_VARIANT=acpp-a100 \
+python compare_backend_torch.py --backend sycl --device cuda --events 100000
+```
+
+The comparison holds the random samples and upstream gradient fixed between
+PyTorch and the selected native backend. SYCL requires both an explicit
+`QUANTOM_SYCL_VARIANT` and an explicit `--device`.
+
 ## Training benchmark
 
 Examples:
