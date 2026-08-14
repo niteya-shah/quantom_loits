@@ -247,3 +247,25 @@ def available_series(rows, cpu):
 
 def available_events(rows, cpu):
     return sorted({row["events"] for row in rows_for_device(rows, cpu) if row.get("events")})
+
+
+def fixed_resource_events(series, stage_samples, training):
+    """Return event counts shared by every selected fixed-resource series.
+
+    Strong- and weak-scaling runs live in the same results directory as the
+    fixed-resource experiment.  Their event counts must not leak into the
+    fixed-resource figure.  A fixed-resource event size is therefore one for
+    which every selected implementation has both detailed region samples and
+    end-to-end training samples at its selected resource level.
+    """
+    if not series:
+        return []
+
+    common = None
+    for key in series:
+        stage_events = {events for (sample_key, events) in stage_samples if sample_key == key}
+        training_events = {events for (sample_key, events) in training if sample_key == key}
+        complete = stage_events & training_events
+        common = complete if common is None else common & complete
+
+    return sorted(common or ())

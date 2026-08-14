@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from plotting.common import (
     STAGES,
-    available_events,
+    fixed_resource_events,
     fixed_resource_series,
     event_hatch,
     load_rows,
@@ -24,13 +24,20 @@ def generate(inputs, output, cpu):
     rows = load_rows(inputs)
     rows = rows_for_device(rows, cpu)
     series = fixed_resource_series(rows, cpu)
-    events = available_events(rows, cpu=True) if cpu else available_events(rows, cpu=False)
-    if not series or not events:
+    if not series:
         return False
 
     stage_samples = per_iteration_stage_samples(rows)
     training = training_samples(rows)
     if not stage_samples or not training:
+        return False
+
+    # The results directory also contains strong/weak-scaling runs.  Only use
+    # event sizes that form a complete fixed-resource comparison across every
+    # selected implementation; otherwise weak-scaling sizes (20k, 40k, ...)
+    # create sparse/misaligned bars and an incorrect event legend.
+    events = fixed_resource_events(series, stage_samples, training)
+    if not events:
         return False
 
     mpl.rcParams["hatch.linewidth"] = 0.15

@@ -47,5 +47,11 @@ counts exist for the same event count and a serial C++ result exists. Weak
 scaling is generated when the results contain at least two thread counts with a
 constant events-per-thread workload. Missing plots are skipped by `plot_all`.
 
+The fixed-resource CPU/GPU plots intentionally ignore event sizes that exist only
+in strong- or weak-scaling runs. Only event counts with complete training and
+region data for every selected fixed-resource implementation are shown. This
+keeps all experiment families in one shared results directory without mixing
+their x-axis groups or hatch legends.
+
 No backend is required. The scripts plot only the result series present in the
 shared results directory, including explicitly named SYCL variants.

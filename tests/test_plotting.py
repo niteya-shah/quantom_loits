@@ -1,6 +1,12 @@
 import csv
 
-from plotting.common import load_rows, mean_std, per_iteration_stage_samples, series_key
+from plotting.common import (
+    fixed_resource_events,
+    load_rows,
+    mean_std,
+    per_iteration_stage_samples,
+    series_key,
+)
 
 
 def _write(path, rows):
@@ -87,3 +93,28 @@ def test_forward_and_backward_are_accumulated_per_training_iteration(tmp_path):
     assert data["F: RNG"] == [7.0]
     assert data["B: Interpolation VJP"] == [7.0]
     assert data["total"] == [14.0]
+
+
+def test_fixed_resource_events_exclude_strong_and_weak_scaling_sizes():
+    cpp = ("cpp", "cpp", "cpu", "")
+    omp = ("openmp", "openmp", "cpu", "64")
+    series = [cpp, omp]
+
+    # 10k/100k/1M are the fixed-resource experiment.  The OpenMP-only sizes
+    # are weak-scaling points sharing the same results directory.
+    fixed = [10_000, 100_000, 1_000_000]
+    weak_only = [20_000, 40_000, 80_000, 160_000, 320_000, 640_000]
+
+    stage_samples = {}
+    training = {}
+    for events in fixed:
+        stage_samples[(cpp, events)] = {"total": [1.0]}
+        training[(cpp, events)] = [1.0]
+        stage_samples[(omp, events)] = {"total": [1.0]}
+        training[(omp, events)] = [1.0]
+
+    for events in weak_only:
+        stage_samples[(omp, events)] = {"total": [1.0]}
+        training[(omp, events)] = [1.0]
+
+    assert fixed_resource_events(series, stage_samples, training) == fixed
