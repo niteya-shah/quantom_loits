@@ -21,7 +21,15 @@ fi
 VARIANT="$1"
 MODE="$2"
 ARCH="${3:-}"
-CXX="${ACPP_CXX:-${ADAPTIVECPP:-acpp}}"
+if [[ -n "${ACPP_CXX:-}" ]]; then
+  CXX="$ACPP_CXX"
+elif [[ -n "${ACPP_PREFIX:-}" ]]; then
+  CXX="$ACPP_PREFIX/bin/acpp"
+elif [[ -n "${ADAPTIVECPP:-}" ]]; then
+  CXX="$ADAPTIVECPP"
+else
+  CXX="acpp"
+fi
 
 if [[ ! "$VARIANT" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]]; then
   echo "invalid SYCL variant name: $VARIANT" >&2

@@ -11,10 +11,13 @@ SEED ?= 0
 SYCL_VARIANT ?=
 SYCL_TARGET ?=
 SYCL_ARCH ?=
+ACPP_PREFIX ?=
+ACPP_REF ?=
+ACPP_JOBS ?= 4
 
 .PHONY: all \
         build build-all build-cpp build-openmp \
-        build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
+        install-acpp build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
         test test-pytorch test-cpp test-openmp test-sycl test-rng \
         benchmark profile list-backends compile-check \
         plots plot-cpu plot-gpu plot-ss plot-ws \
@@ -35,6 +38,13 @@ build-cpp:
 
 build-openmp:
 	$(PYTHON) -m openmp.build
+
+# Generic AdaptiveCpp source install. This intentionally does not install
+# system packages, LLVM, CUDA, or ROCm; provide those through the environment
+# available on the machine where AdaptiveCpp is built.
+install-acpp:
+	@test -n "$(ACPP_PREFIX)" || { echo "ACPP_PREFIX is required" >&2; exit 2; }
+	ACPP_REF="$(ACPP_REF)" ACPP_JOBS="$(ACPP_JOBS)" ./sycl/install-acpp.sh "$(ACPP_PREFIX)"
 
 # Examples:
 #   make build-sycl-acpp SYCL_VARIANT=acpp-a100 SYCL_TARGET=cuda SYCL_ARCH=sm_80

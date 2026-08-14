@@ -45,6 +45,47 @@ List complete builds with:
 
     make list-sycl-builds
 
+## Install AdaptiveCpp
+
+The repository includes a small general AdaptiveCpp source installer:
+
+    ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp
+
+To pin the toolchain for reproducible experiments, pass a tag or commit:
+
+    ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp <tag-or-commit>
+
+The Makefile wrapper is equivalent:
+
+    make install-acpp \
+        ACPP_PREFIX=/shared/toolchains/adaptivecpp \
+        ACPP_REF=<tag-or-commit>
+
+The installer intentionally contains no package-manager commands, module loads,
+hardware detection, or machine-specific compiler paths. It performs the normal
+AdaptiveCpp CMake configure/build/install sequence only. The machine must already
+provide AdaptiveCpp's build dependencies and whichever vendor stacks are needed
+for the targets that installation should support.
+
+Useful environment overrides are:
+
+    ACPP_WORKDIR=/scratch/me/acpp-build
+    ACPP_SOURCE_DIR=/path/to/existing/AdaptiveCpp
+    ACPP_JOBS=8
+    ACPP_BUILD_TYPE=Release
+    ACPP_CMAKE_ARGS="-DLLVM_DIR=/path/to/llvm/lib/cmake/llvm ..."
+
+`ACPP_SOURCE_DIR` is useful on clusters where compute nodes do not have outbound
+network access. `ACPP_CMAKE_ARGS` is the escape hatch for the LLVM/CUDA/ROCm
+configuration we determine for a particular cluster; those settings are not
+hard-coded into this repository.
+
+After installation either put `bin/` on `PATH`, set `ACPP_CXX` directly, or set:
+
+    export ACPP_PREFIX=/shared/toolchains/adaptivecpp
+
+`build-acpp.sh` recognizes `ACPP_PREFIX` and uses `$ACPP_PREFIX/bin/acpp`.
+
 ## Build
 
 The build scripts require an explicit variant name and target. CUDA/HIP builds

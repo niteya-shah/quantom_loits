@@ -3,10 +3,11 @@
 This repository contains the active differentiable LOITS implementations used
 for the PyTorch/C++/OpenMP/SYCL performance study. The current codebase focuses
 on end-to-end training, native forward/backward execution, correctness, and
-profiling. Historical conference-artifact implementations, archived results, and old
-toolchain installers are intentionally not kept in the active tree; they
-remain available through Git history. The active plotting tools have been
-rewritten for the current training/profiler CSV format.
+profiling. Historical conference-artifact implementations and archived results are
+not kept in the active tree. The old machine-specific toolchain installers were
+removed; the active tree keeps a small general AdaptiveCpp source installer.
+The active plotting tools have been rewritten for the current training/profiler
+CSV format.
 
 ## Backends
 
@@ -61,6 +62,39 @@ pixi shell
 Install the PyTorch distribution appropriate for the machine separately. C++
 and OpenMP also require a system compiler. SYCL requires either AdaptiveCpp or
 an appropriate DPC++/oneAPI/LLVM SYCL toolchain.
+
+### AdaptiveCpp installation
+
+`sycl/install-acpp.sh` provides a general source installation of AdaptiveCpp.
+It deliberately does not contain package-manager commands, machine names, module
+loads, CUDA/ROCm paths, or other cluster-specific assumptions. It follows the
+standard upstream CMake install flow and expects the required dependencies to be
+available in the environment.
+
+Install to an explicit prefix, for example a shared toolchain directory:
+
+```bash
+./sycl/install-acpp.sh /shared/toolchains/adaptivecpp
+```
+
+For a reproducible installation, provide an AdaptiveCpp tag or commit explicitly:
+
+```bash
+./sycl/install-acpp.sh /shared/toolchains/adaptivecpp <tag-or-commit>
+```
+
+The Makefile exposes the same operation:
+
+```bash
+make install-acpp \
+    ACPP_PREFIX=/shared/toolchains/adaptivecpp \
+    ACPP_REF=<tag-or-commit>
+```
+
+The installer does not build LLVM or vendor GPU stacks. Extra AdaptiveCpp CMake
+configuration can be supplied through `ACPP_CMAKE_ARGS`; `ACPP_SOURCE_DIR` can
+point at an existing source checkout when cloning from a compute node is
+undesirable. See `sycl/README.md` for details.
 
 ## Build
 
