@@ -24,6 +24,7 @@ Environment overrides:
   ACPP_REPO         repository URL
   CUDA_PATH         optional CUDA toolkit root passed to AdaptiveCpp
   ROCM_PATH         optional ROCm root passed to AdaptiveCpp
+  ACPP_ALLOW_UNSUPPORTED_LLVM allow LLVM outside the currently documented 15--21 window
 USAGE
 }
 
@@ -71,6 +72,17 @@ done
 if ! compgen -G "$LLVM_PREFIX/lib/libLLVM.so*" >/dev/null; then
   echo "custom LLVM installation is incomplete: no libLLVM.so under $LLVM_PREFIX/lib" >&2
   exit 2
+fi
+
+LLVM_CONFIG="$LLVM_PREFIX/bin/llvm-config"
+if [[ -x "$LLVM_CONFIG" ]]; then
+  LLVM_VERSION_ACTUAL="$($LLVM_CONFIG --version)"
+  LLVM_MAJOR="${LLVM_VERSION_ACTUAL%%.*}"
+  if [[ "$LLVM_MAJOR" =~ ^[0-9]+$ ]] && (( LLVM_MAJOR < 15 || LLVM_MAJOR > 21 )) && [[ "${ACPP_ALLOW_UNSUPPORTED_LLVM:-0}" != "1" ]]; then
+    echo "LLVM $LLVM_VERSION_ACTUAL is outside AdaptiveCpp's currently documented LLVM 15--21 support window." >&2
+    echo "Set ACPP_ALLOW_UNSUPPORTED_LLVM=1 only when intentionally testing a newer/older supported configuration." >&2
+    exit 2
+  fi
 fi
 
 for tool in cmake python3; do
@@ -125,7 +137,6 @@ mkdir -p "$BUILD"
 # by, and linked against, the same controlled LLVM installation.
 export PATH="$LLVM_PREFIX/bin:$PATH"
 export LD_LIBRARY_PATH="$LLVM_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export ACPP_NVPTX_CLANG="$LLVM_CLANGXX"
 
 read -r -a EXTRA_CMAKE <<< "${ACPP_CMAKE_ARGS:-}"
 
@@ -138,15 +149,15 @@ CMAKE_CMD=(
   "-DCMAKE_C_COMPILER=$LLVM_CLANG"
   "-DCMAKE_CXX_COMPILER=$LLVM_CLANGXX"
   "-DLLVM_DIR=$LLVM_DIR"
-  "-DClang_DIR=$CLANG_DIR"
+  "-DCLANG_EXECUTABLE_PATH=$LLVM_CLANGXX"
   -DACPP_COMPILER_FEATURE_PROFILE=full
 )
 
 if [[ -n "${CUDA_PATH:-}" ]]; then
-  CMAKE_CMD+=("-DCUDAToolkit_ROOT=$CUDA_PATH" "-DCUDA_TOOLKIT_ROOT_DIR=$CUDA_PATH")
+  CMAKE_CMD+=("-DCUDA_TOOLKIT_ROOT_DIR=$CUDA_PATH" -DWITH_CUDA_BACKEND=ON)
 fi
 if [[ -n "${ROCM_PATH:-}" ]]; then
-  CMAKE_CMD+=("-DROCM_PATH=$ROCM_PATH")
+  CMAKE_CMD+=("-DROCM_PATH=$ROCM_PATH" -DWITH_ROCM_BACKEND=ON)
 fi
 
 CMAKE_CMD+=("${EXTRA_CMAKE[@]}")

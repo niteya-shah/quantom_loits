@@ -18,10 +18,14 @@ LLVM_JOBS ?= 4
 ACPP_PREFIX ?=
 ACPP_REF ?=
 ACPP_JOBS ?= 4
+DPCPP_PREFIX ?=
+DPCPP_TARGETS ?=
+DPCPP_REF ?=
+DPCPP_JOBS ?= 4
 
 .PHONY: all \
         build build-all build-cpp build-openmp \
-        install-llvm install-acpp build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
+        install-llvm install-acpp install-dpcpp build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
         test test-pytorch test-cpp test-openmp test-sycl test-rng \
         benchmark profile list-backends compile-check \
         plots plot-cpu plot-gpu plot-ss plot-ws \
@@ -56,6 +60,14 @@ install-acpp:
 	@test -n "$(ACPP_PREFIX)" || { echo "ACPP_PREFIX is required" >&2; exit 2; }
 	@test -n "$(LLVM_PREFIX)" || { echo "LLVM_PREFIX is required; AdaptiveCpp does not fall back to system LLVM" >&2; exit 2; }
 	ACPP_REF="$(ACPP_REF)" ACPP_JOBS="$(ACPP_JOBS)" ./sycl/install-acpp.sh "$(ACPP_PREFIX)" "$(LLVM_PREFIX)"
+
+# DPC++ follows Intel's current source-build workflow. It builds its own
+# LLVM-based SYCL toolchain with buildbot/configure.py + compile.py; it does
+# not consume LLVM_PREFIX and no longer requires the old external oneTBB setup.
+install-dpcpp:
+	@test -n "$(DPCPP_PREFIX)" || { echo "DPCPP_PREFIX is required" >&2; exit 2; }
+	@test -n "$(DPCPP_TARGETS)" || { echo "DPCPP_TARGETS is required (cpu,xpu,cuda,hip or a comma-separated combination)" >&2; exit 2; }
+	DPCPP_REF="$(DPCPP_REF)" DPCPP_JOBS="$(DPCPP_JOBS)" ./sycl/install-dpcpp.sh "$(DPCPP_PREFIX)" "$(DPCPP_TARGETS)"
 
 # Examples:
 #   make build-sycl-acpp SYCL_VARIANT=acpp-a100 SYCL_TARGET=cuda SYCL_ARCH=sm_80

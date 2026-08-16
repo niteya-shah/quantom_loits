@@ -36,10 +36,14 @@ if [[ ! "$VARIANT" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]]; then
   exit 2
 fi
 
+BACKEND_FLAGS=()
+
 case "$MODE" in
   generic)
     [[ -z "$ARCH" ]] || { echo "generic target does not take an architecture" >&2; exit 2; }
     TARGETS="generic"
+    [[ -z "${CUDA_PATH:-}" ]] || BACKEND_FLAGS+=("--acpp-cuda-path=$CUDA_PATH")
+    [[ -z "${ROCM_PATH:-}" ]] || BACKEND_FLAGS+=("--acpp-rocm-path=$ROCM_PATH")
     TORCH_DEVICE="auto"
     ;;
   cpu|omp)
@@ -50,11 +54,13 @@ case "$MODE" in
   cuda)
     [[ -n "$ARCH" ]] || { echo "CUDA architecture is required, e.g. sm_80" >&2; usage; exit 2; }
     TARGETS="cuda:$ARCH"
+    [[ -z "${CUDA_PATH:-}" ]] || BACKEND_FLAGS+=("--acpp-cuda-path=$CUDA_PATH")
     TORCH_DEVICE="cuda"
     ;;
   hip)
     [[ -n "$ARCH" ]] || { echo "HIP architecture is required, e.g. gfx90a" >&2; usage; exit 2; }
     TARGETS="hip:$ARCH"
+    [[ -z "${ROCM_PATH:-}" ]] || BACKEND_FLAGS+=("--acpp-rocm-path=$ROCM_PATH")
     TORCH_DEVICE="cuda"
     ;;
   *)
@@ -79,12 +85,18 @@ rm -f \
   "$BUILD/target.txt" \
   "$BUILD/architecture.txt"
 read -r -a EXTRA <<< "${SYCL_EXTRA_FLAGS:-}"
+RPATH_FLAGS=()
+if [[ -n "${ACPP_PREFIX:-}" ]]; then
+  RPATH_FLAGS+=("-Wl,-rpath,$ACPP_PREFIX/lib")
+fi
 
 "$CXX" \
   -O3 -std=c++17 -DNDEBUG -fPIC -shared \
   --acpp-targets="$TARGETS" \
+  "${BACKEND_FLAGS[@]}" \
   -I"$ROOT" \
   "${EXTRA[@]}" \
+  "${RPATH_FLAGS[@]}" \
   "$HERE/loits_core.cpp" \
   -Wl,-soname,libquantom_loits_sycl.so \
   -o "$BUILD/libquantom_loits_sycl.so"

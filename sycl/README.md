@@ -45,53 +45,65 @@ List complete builds with:
 
     make list-sycl-builds
 
-## Install LLVM and AdaptiveCpp
+## Install the SYCL toolchains
 
-The original artifact did **not** build AdaptiveCpp against an arbitrary system
-LLVM. It first built a controlled LLVM toolchain from source and then configured
-AdaptiveCpp to use that exact LLVM. The current scripts preserve that dependency
-without restoring any hostname/module-specific logic.
+The source-build helpers are intentionally generic: no hostnames, module loads,
+or vendor-specific filesystem paths are encoded. They follow the current
+upstream build instructions and leave cluster-specific CUDA, ROCm, Level Zero,
+and compiler module selection to the environment.
 
-First build LLVM. The target set is explicit:
+### LLVM for AdaptiveCpp
+
+The original artifact needed a controlled source-built LLVM for AdaptiveCpp. We
+retain that reproducibility path, even though current AdaptiveCpp documentation
+says a sufficiently recent distribution LLVM is usually easier. The source-build
+recipe itself has been updated to the current AdaptiveCpp LLVM documentation.
+AdaptiveCpp currently supports official LLVM releases 15--21 and does not
+support development LLVM snapshots.
+
+Build only the code-generation targets required by the AdaptiveCpp installation:
 
     make install-llvm \
-        LLVM_PREFIX=/shared/toolchains/llvm-19.1.7 \
+        LLVM_PREFIX=/shared/toolchains/llvm-21.1.0 \
         LLVM_TARGETS=cpu,cuda \
-        LLVM_VERSION=19.1.7
+        LLVM_VERSION=21.1.0
 
 or directly:
 
     ./sycl/install-llvm.sh \
-        /shared/toolchains/llvm-19.1.7 \
+        /shared/toolchains/llvm-21.1.0 \
         cpu,cuda \
-        19.1.7
+        21.1.0
 
-`cpu` builds X86, `cuda` additionally builds NVPTX, and `hip` additionally builds
-AMDGPU. The installer builds Clang, clang-tools-extra, LLD, the OpenMP/offload
-runtimes, compiler-rt, libc++, libc++abi, libunwind, and a shared `libLLVM`.
-This is the important toolchain shape used by the previous working setup.
+`cpu` enables X86, `cuda` adds NVPTX, and `hip` adds AMDGPU. The current source
+recipe builds `clang;lld;openmp`, `compiler-rt`, and shared `libLLVM`; disables
+LLVM assertions/dumps/tests/examples/benchmarks; and disables libomptarget. It
+does **not** build the old `clang-tools-extra`, libc++, libc++abi, libunwind, or
+OpenMP offload runtime stack because AdaptiveCpp's current instructions do not
+require those for this LLVM dependency.
 
-Useful LLVM overrides include:
+Useful overrides:
 
     LLVM_WORKDIR=/scratch/me/llvm-build
     LLVM_SOURCE_DIR=/path/to/existing/llvm-project
+    LLVM_REF=llvmorg-21.1.0
     LLVM_JOBS=16
     LLVM_LINK_JOBS=2
     LLVM_C_COMPILER=/path/to/gcc
     LLVM_CXX_COMPILER=/path/to/g++
-    CUDA_PATH=/path/to/cuda
-    ROCM_PATH=/path/to/rocm
-    CUDA_ARCH=sm_80
-    HIP_ARCH=gfx90a
+    LLVM_CMAKE_ARGS="..."
 
-No vendor path or GPU architecture is guessed unless it can be derived from a
-compiler already on `PATH`. Cluster-specific module loads and paths remain the
-responsibility of the job environment.
+The installer rejects LLVM major versions outside AdaptiveCpp's currently
+documented 15--21 window unless `LLVM_ALLOW_UNSUPPORTED=1` is set deliberately.
 
-Then build AdaptiveCpp against that explicit LLVM prefix:
+### AdaptiveCpp
+
+AdaptiveCpp's current source prerequisites include Python 3, CMake, and Boost;
+the installer intentionally does not install system packages. Build AdaptiveCpp
+against the controlled LLVM prefix:
 
     make install-acpp \
-        LLVM_PREFIX=/shared/toolchains/llvm-19.1.7 \
+        LLVM_PREFIX=/shared/toolchains/llvm-21.1.0 \
         ACPP_PREFIX=/shared/toolchains/adaptivecpp \
         ACPP_REF=<tag-or-commit>
 
@@ -99,23 +111,79 @@ or directly:
 
     ./sycl/install-acpp.sh \
         /shared/toolchains/adaptivecpp \
-        /shared/toolchains/llvm-19.1.7 \
+        /shared/toolchains/llvm-21.1.0 \
         <tag-or-commit>
 
-AdaptiveCpp does not fall back to a system LLVM. Its C and C++ compilers,
-`LLVM_DIR`, `Clang_DIR`, runtime library path, and compiler feature profile are
-all tied to the supplied LLVM installation.
+The CMake configuration uses AdaptiveCpp's current recommended `full` compiler
+feature profile and points it to the selected LLVM with `LLVM_DIR` and
+`CLANG_EXECUTABLE_PATH`. If `CUDA_PATH` is supplied, the installer passes
+`CUDA_TOOLKIT_ROOT_DIR` and enables the CUDA backend. If `ROCM_PATH` is supplied,
+it passes `ROCM_PATH` and enables the ROCm backend.
 
-`ACPP_SOURCE_DIR` and `LLVM_SOURCE_DIR` are useful on clusters where compute
-nodes do not have outbound network access. `ACPP_CMAKE_ARGS` and
-`LLVM_CMAKE_ARGS` remain escape hatches for settings we discover are needed on
-the current cluster.
+For the generic AMD path, AdaptiveCpp currently requires its LLVM version to be
+no newer than the LLVM version bundled with ROCm. That compatibility must be
+checked when we inspect the cluster's ROCm module.
 
-After installation either put `bin/` on `PATH`, set `ACPP_CXX` directly, or set:
+After installation:
 
     export ACPP_PREFIX=/shared/toolchains/adaptivecpp
 
-`build-acpp.sh` recognizes `ACPP_PREFIX` and uses `$ACPP_PREFIX/bin/acpp`.
+`build-acpp.sh` then resolves `$ACPP_PREFIX/bin/acpp`.
+
+### DPC++
+
+Intel's current Linux source-build prerequisites include Git, CMake, Python,
+Ninja, and hwloc >= 2.3 (with zstd optional). The installer checks the basic
+command-line tools but intentionally does not install system packages.
+
+DPC++ does **not** use the AdaptiveCpp LLVM prefix. Current Intel documentation
+builds DPC++'s own LLVM-based SYCL toolchain from the `intel/llvm` `sycl` branch
+with `buildbot/configure.py` followed by `buildbot/compile.py`. The old QuantOm
+requirements for a pre-built custom LLVM and external oneTBB have therefore been
+removed from the DPC++ installer.
+
+Build a toolchain with an explicit target set:
+
+    make install-dpcpp \
+        DPCPP_PREFIX=/shared/toolchains/dpcpp-xpu-cuda \
+        DPCPP_TARGETS=xpu,cuda \
+        DPCPP_REF=<commit-or-tag>
+
+or directly:
+
+    ./sycl/install-dpcpp.sh \
+        /shared/toolchains/dpcpp-xpu-cuda \
+        xpu,cuda \
+        <commit-or-tag>
+
+Targets map to Intel's current configure interface:
+
+    cpu   -> --native_cpu
+    xpu   -> normal SPIR-capable DPC++ build
+    cuda  -> --cuda
+    hip   -> --hip
+
+The target list can contain several entries, so a single source-built DPC++
+toolchain can support, for example, `xpu,cuda`. There is no default target.
+
+For non-standard vendor stacks:
+
+    CUDA_PATH=/path/to/cuda
+    ROCM_PATH=/path/to/rocm
+
+The installer passes `CUDAToolkit_ROOT` for CUDA and `UR_HIP_ROCM_DIR` for HIP,
+matching the current DPC++ guide. Native CPU no longer requires a separate TBB
+installation. Level Zero remains an external runtime requirement on Intel GPU
+nodes.
+
+Intel's source-build guide currently uses the build tree directly as the
+toolchain (`bin/` and `lib/`) and marks deployment instructions as incomplete.
+For that reason `DPCPP_PREFIX` is the final DPC++ **build directory**, not a
+relocated copy of it. After building:
+
+    export DPCPP_PREFIX=/shared/toolchains/dpcpp-xpu-cuda
+
+`build-dpcpp.sh` then resolves `$DPCPP_PREFIX/bin/clang++`.
 
 ## Build
 
@@ -148,9 +216,11 @@ The Makefile exposes the same explicit interface:
         SYCL_VARIANT=dpcpp-xpu \
         SYCL_TARGET=xpu
 
-Compiler paths remain overrideable with `ACPP_CXX`, `DPCPP_CXX`,
-`DPCPP_CPU_CXX`, `DPCPP_XPU_CXX`, `DPCPP_CUDA_CXX`, and `DPCPP_HIP_CXX`.
-Additional compiler flags can be supplied with `SYCL_EXTRA_FLAGS`.
+Installed toolchain roots can be selected with `ACPP_PREFIX` and
+`DPCPP_PREFIX`. Compiler paths remain overrideable with `ACPP_CXX`,
+`DPCPP_CXX`, `DPCPP_CPU_CXX`, `DPCPP_XPU_CXX`, `DPCPP_CUDA_CXX`, and
+`DPCPP_HIP_CXX`. Additional compiler flags can be supplied with
+`SYCL_EXTRA_FLAGS`.
 
 For ROCm PyTorch, the Torch device string is still `cuda`.
 

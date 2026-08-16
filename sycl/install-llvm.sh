@@ -5,33 +5,29 @@ usage() {
   cat >&2 <<'USAGE'
 usage: install-llvm.sh <install-prefix> <targets> <llvm-version>
 
-Build the released LLVM toolchain used to build AdaptiveCpp.
+Build an official released LLVM toolchain for AdaptiveCpp.
 
 <targets> is a comma-separated list containing one or more of:
   cpu   build the X86 target
   cuda  additionally build the NVPTX target
   hip   additionally build the AMDGPU target
 
-Examples:
-  ./sycl/install-llvm.sh /shared/toolchains/llvm-19.0.1 cpu
-  ./sycl/install-llvm.sh /shared/toolchains/llvm-19.0.1 cpu,cuda
-  ./sycl/install-llvm.sh /shared/toolchains/llvm-19.0.1 cpu,hip
-  ./sycl/install-llvm.sh /shared/toolchains/llvm-19.0.1 cpu,cuda,hip 19.0.1
+The version must name an official LLVM release, e.g. 21.1.0. By default the
+script checks out the matching llvmorg-<version> tag. AdaptiveCpp does not
+support unreleased/development LLVM versions.
 
 Environment overrides:
   LLVM_WORKDIR          source/build root; use cluster scratch for large builds
   LLVM_SOURCE_DIR       existing llvm-project checkout/source tree
+  LLVM_REF              explicit llvm-project git ref instead of llvmorg-<version>
   LLVM_JOBS             parallel build jobs (default: 4)
   LLVM_LINK_JOBS        optional LLVM_PARALLEL_LINK_JOBS value
   LLVM_BUILD_TYPE       CMake build type (default: Release)
   LLVM_C_COMPILER       host C compiler (default: gcc from PATH)
   LLVM_CXX_COMPILER     host C++ compiler (default: g++ from PATH)
   LLVM_CMAKE_ARGS       additional whitespace-separated CMake arguments
+  LLVM_ALLOW_UNSUPPORTED allow a release outside the currently documented 15--21 window
   LLVM_REPO             llvm-project repository URL
-  CUDA_PATH             optional CUDA toolkit root for CUDA/offload discovery
-  ROCM_PATH             optional ROCm root for HIP/offload discovery
-  CUDA_ARCH             optional libomptarget CUDA architecture (e.g. sm_80)
-  HIP_ARCH              optional libomptarget HIP architecture (e.g. gfx90a)
 USAGE
 }
 
@@ -48,6 +44,7 @@ fi
 PREFIX="$1"
 TARGET_SPEC="$2"
 VERSION="$3"
+REF="${LLVM_REF:-llvmorg-${VERSION}}"
 JOBS="${LLVM_JOBS:-4}"
 BUILD_TYPE="${LLVM_BUILD_TYPE:-Release}"
 REPO="${LLVM_REPO:-https://github.com/llvm/llvm-project.git}"
@@ -58,6 +55,21 @@ CC_BIN="${LLVM_C_COMPILER:-$(command -v gcc || true)}"
 CXX_BIN="${LLVM_CXX_COMPILER:-$(command -v g++ || true)}"
 
 [[ -n "$PREFIX" ]] || { echo "install prefix must not be empty" >&2; exit 2; }
+[[ -n "$TARGET_SPEC" ]] || { echo "LLVM targets must not be empty" >&2; exit 2; }
+[[ -n "$VERSION" ]] || { echo "LLVM version must not be empty" >&2; exit 2; }
+LLVM_MAJOR="${VERSION%%.*}"
+if [[ ! "$LLVM_MAJOR" =~ ^[0-9]+$ ]]; then
+  echo "LLVM version must begin with a numeric major release: $VERSION" >&2
+  exit 2
+fi
+# AdaptiveCpp's current documentation supports official LLVM releases 15--21.
+# Keep the controlled toolchain inside that supported window unless a future
+# AdaptiveCpp update is being tested deliberately.
+if (( LLVM_MAJOR < 15 || LLVM_MAJOR > 21 )) && [[ "${LLVM_ALLOW_UNSUPPORTED:-0}" != "1" ]]; then
+  echo "LLVM $VERSION is outside AdaptiveCpp's currently documented LLVM 15--21 support window." >&2
+  echo "Set LLVM_ALLOW_UNSUPPORTED=1 only when intentionally testing a newer/older AdaptiveCpp-supported LLVM." >&2
+  exit 2
+fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "LLVM_JOBS must be a positive integer" >&2; exit 2; }
 [[ -n "$CC_BIN" && -x "$CC_BIN" ]] || { echo "host C compiler not found; set LLVM_C_COMPILER" >&2; exit 127; }
 [[ -n "$CXX_BIN" && -x "$CXX_BIN" ]] || { echo "host C++ compiler not found; set LLVM_CXX_COMPILER" >&2; exit 127; }
@@ -68,19 +80,11 @@ done
 
 IFS=',' read -r -a REQUESTED_TARGETS <<< "$TARGET_SPEC"
 LLVM_TARGETS=(X86)
-WANT_CUDA=0
-WANT_HIP=0
-
 for target in "${REQUESTED_TARGETS[@]}"; do
   case "$target" in
-    cpu)
-      ;;
-    cuda)
-      WANT_CUDA=1
-      ;;
-    hip)
-      WANT_HIP=1
-      ;;
+    cpu) ;;
+    cuda) LLVM_TARGETS+=(NVPTX) ;;
+    hip) LLVM_TARGETS+=(AMDGPU) ;;
     *)
       echo "invalid LLVM target '$target'; expected cpu,cuda,hip" >&2
       exit 2
@@ -88,14 +92,6 @@ for target in "${REQUESTED_TARGETS[@]}"; do
   esac
 done
 
-if (( WANT_CUDA )); then
-  LLVM_TARGETS+=(NVPTX)
-fi
-if (( WANT_HIP )); then
-  LLVM_TARGETS+=(AMDGPU)
-fi
-
-# Remove duplicates while preserving order.
 UNIQUE_TARGETS=()
 for target in "${LLVM_TARGETS[@]}"; do
   seen=0
@@ -110,16 +106,21 @@ if [[ -z "${LLVM_SOURCE_DIR:-}" ]]; then
   command -v git >/dev/null 2>&1 || { echo "required tool not found: git" >&2; exit 127; }
   if [[ ! -d "$SOURCE/.git" ]]; then
     mkdir -p "$(dirname "$SOURCE")"
-    echo "Cloning LLVM ${VERSION} from $REPO"
-    git clone --depth 1 --branch "llvmorg-${VERSION}" "$REPO" "$SOURCE"
-  else
-    echo "Using existing LLVM checkout: $SOURCE"
+    echo "Cloning LLVM ref $REF from $REPO"
+    git clone --filter=blob:none --no-checkout "$REPO" "$SOURCE"
   fi
+  git -C "$SOURCE" fetch --depth 1 origin "$REF"
+  git -C "$SOURCE" checkout --detach FETCH_HEAD
 else
   [[ -f "$SOURCE/llvm/CMakeLists.txt" ]] || {
     echo "LLVM_SOURCE_DIR is not an llvm-project source tree: $SOURCE" >&2
     exit 2
   }
+fi
+
+COMMIT="unknown"
+if [[ -d "$SOURCE/.git" ]]; then
+  COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
 fi
 
 mkdir -p "$PREFIX"
@@ -128,6 +129,9 @@ mkdir -p "$BUILD"
 
 read -r -a EXTRA_CMAKE <<< "${LLVM_CMAKE_ARGS:-}"
 
+# This intentionally follows AdaptiveCpp's current source-LLVM recipe rather
+# than the older QuantOm artifact recipe. In particular we do not build libc++,
+# libc++abi, libunwind, clang-tools-extra, or libomptarget/offload runtimes.
 CMAKE_CMD=(
   cmake
   -S "$SOURCE/llvm"
@@ -137,41 +141,26 @@ CMAKE_CMD=(
   "-DCMAKE_INSTALL_PREFIX=$PREFIX"
   "-DCMAKE_C_COMPILER=$CC_BIN"
   "-DCMAKE_CXX_COMPILER=$CXX_BIN"
-  "-DLLVM_ENABLE_PROJECTS=clang;clang-tools-extra;lld"
-  "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;openmp;offload;libunwind;compiler-rt"
+  "-DLLVM_ENABLE_PROJECTS=clang;lld;openmp"
+  "-DLLVM_ENABLE_RUNTIMES=compiler-rt"
+  -DOPENMP_ENABLE_LIBOMPTARGET=OFF
+  -DLLVM_ENABLE_ASSERTIONS=OFF
+  -DLLVM_ENABLE_DUMP=OFF
   "-DLLVM_TARGETS_TO_BUILD=$LLVM_TARGETS_CMAKE"
+  -DLLVM_INCLUDE_BENCHMARKS=OFF
+  -DLLVM_INCLUDE_EXAMPLES=OFF
+  -DLLVM_INCLUDE_TESTS=OFF
+  -DLLVM_ENABLE_OCAMLDOC=OFF
+  -DLLVM_ENABLE_BINDINGS=OFF
+  -DLLVM_TEMPORARILY_ALLOW_OLD_TOOLCHAIN=OFF
   -DLLVM_BUILD_LLVM_DYLIB=ON
-  -DLLVM_LINK_LLVM_DYLIB=ON
-  -DLLVM_ENABLE_RTTI=ON
+  -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON
+  "-DCMAKE_INSTALL_RPATH=$PREFIX/lib"
 )
 
 if [[ -n "${LLVM_LINK_JOBS:-}" ]]; then
   [[ "$LLVM_LINK_JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "LLVM_LINK_JOBS must be a positive integer" >&2; exit 2; }
   CMAKE_CMD+=("-DLLVM_PARALLEL_LINK_JOBS=$LLVM_LINK_JOBS")
-fi
-
-OFFLOAD_ARCHES=()
-if (( WANT_CUDA )); then
-  if [[ -z "${CUDA_PATH:-}" ]] && command -v nvcc >/dev/null 2>&1; then
-    CUDA_PATH="$(cd "$(dirname "$(command -v nvcc)")/.." && pwd)"
-  fi
-  if [[ -n "${CUDA_PATH:-}" ]]; then
-    CMAKE_CMD+=("-DCUDAToolkit_ROOT=$CUDA_PATH" "-DCUDA_TOOLKIT_ROOT_DIR=$CUDA_PATH")
-  fi
-  [[ -n "${CUDA_ARCH:-}" ]] && OFFLOAD_ARCHES+=("$CUDA_ARCH")
-fi
-
-if (( WANT_HIP )); then
-  if [[ -z "${ROCM_PATH:-}" ]] && command -v hipcc >/dev/null 2>&1; then
-    ROCM_PATH="$(cd "$(dirname "$(command -v hipcc)")/.." && pwd)"
-  fi
-  [[ -n "${ROCM_PATH:-}" ]] && CMAKE_CMD+=("-DROCM_PATH=$ROCM_PATH")
-  [[ -n "${HIP_ARCH:-}" ]] && OFFLOAD_ARCHES+=("$HIP_ARCH")
-fi
-
-if (( ${#OFFLOAD_ARCHES[@]} > 0 )); then
-  OFFLOAD_ARCHES_CMAKE="$(IFS=';'; echo "${OFFLOAD_ARCHES[*]}")"
-  CMAKE_CMD+=("-DLIBOMPTARGET_DEVICE_ARCHITECTURES=$OFFLOAD_ARCHES_CMAKE")
 fi
 
 CMAKE_CMD+=("${EXTRA_CMAKE[@]}")
@@ -199,14 +188,12 @@ fi
 
 cat > "$PREFIX/quantom-llvm-info.txt" <<INFO
 version=$VERSION
+ref=$REF
+commit=$COMMIT
 requested_targets=$TARGET_SPEC
 llvm_targets=$LLVM_TARGETS_CMAKE
 host_cc=$CC_BIN
 host_cxx=$CXX_BIN
-cuda_path=${CUDA_PATH:-}
-rocm_path=${ROCM_PATH:-}
-cuda_arch=${CUDA_ARCH:-}
-hip_arch=${HIP_ARCH:-}
 INFO
 
 echo

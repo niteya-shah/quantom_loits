@@ -22,6 +22,25 @@ VARIANT="$1"
 MODE="$2"
 ARCH="${3:-}"
 
+# A source-built DPC++ toolchain is used directly from its build directory,
+# matching Intel's current source-build documentation. Explicit per-mode
+# compiler overrides still take precedence.
+DPCPP_PREFIX="${DPCPP_PREFIX:-}"
+
+resolve_cxx() {
+  local specific="$1"
+  local fallback="$2"
+  if [[ -n "$specific" ]]; then
+    printf '%s\n' "$specific"
+  elif [[ -n "${DPCPP_CXX:-}" ]]; then
+    printf '%s\n' "$DPCPP_CXX"
+  elif [[ -n "$DPCPP_PREFIX" ]]; then
+    printf '%s\n' "$DPCPP_PREFIX/bin/clang++"
+  else
+    printf '%s\n' "$fallback"
+  fi
+}
+
 if [[ ! "$VARIANT" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]]; then
   echo "invalid SYCL variant name: $VARIANT" >&2
   exit 2
@@ -30,28 +49,30 @@ fi
 case "$MODE" in
   cpu)
     [[ -z "$ARCH" ]] || { echo "cpu target does not take an architecture" >&2; exit 2; }
-    CXX="${DPCPP_CPU_CXX:-${DPCPP_CXX:-icpx}}"
+    CXX="$(resolve_cxx "${DPCPP_CPU_CXX:-}" icpx)"
     TARGET_FLAGS=(-fsycl -fsycl-targets=native_cpu)
     TORCH_DEVICE="cpu"
     ;;
   xpu)
     [[ -z "$ARCH" ]] || { echo "xpu target does not take an architecture" >&2; exit 2; }
-    CXX="${DPCPP_XPU_CXX:-${DPCPP_CXX:-icpx}}"
+    CXX="$(resolve_cxx "${DPCPP_XPU_CXX:-}" icpx)"
     TARGET_FLAGS=(-fsycl -fsycl-targets=spir64)
     TORCH_DEVICE="xpu"
     ;;
   cuda)
     [[ -n "$ARCH" ]] || { echo "CUDA architecture is required, e.g. sm_80" >&2; usage; exit 2; }
-    CXX="${DPCPP_CUDA_CXX:-${DPCPP_CXX:-clang++}}"
+    CXX="$(resolve_cxx "${DPCPP_CUDA_CXX:-}" clang++)"
     TARGET="nvptx64-nvidia-cuda"
-    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend="$TARGET" "--offload-arch=$ARCH")
+    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend "--cuda-gpu-arch=$ARCH")
+    CUDA_ROOT="${DPCPP_CUDA_PATH:-${CUDA_PATH:-}}"
+    [[ -z "$CUDA_ROOT" ]] || TARGET_FLAGS+=("--cuda-path=$CUDA_ROOT")
     TORCH_DEVICE="cuda"
     ;;
   hip)
     [[ -n "$ARCH" ]] || { echo "HIP architecture is required, e.g. gfx90a" >&2; usage; exit 2; }
-    CXX="${DPCPP_HIP_CXX:-${DPCPP_CXX:-clang++}}"
+    CXX="$(resolve_cxx "${DPCPP_HIP_CXX:-}" clang++)"
     TARGET="amdgcn-amd-amdhsa"
-    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend="$TARGET" "--offload-arch=$ARCH")
+    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend "--offload-arch=$ARCH")
     TORCH_DEVICE="cuda"
     ;;
   *)
@@ -74,12 +95,17 @@ rm -f \
   "$BUILD/target.txt" \
   "$BUILD/architecture.txt"
 read -r -a EXTRA <<< "${SYCL_EXTRA_FLAGS:-}"
+RPATH_FLAGS=()
+if [[ -n "$DPCPP_PREFIX" ]]; then
+  RPATH_FLAGS+=("-Wl,-rpath,$DPCPP_PREFIX/lib")
+fi
 
 "$CXX" \
   -O3 -std=c++17 -DNDEBUG -fPIC -shared \
   "${TARGET_FLAGS[@]}" \
   -I"$ROOT" \
   "${EXTRA[@]}" \
+  "${RPATH_FLAGS[@]}" \
   "$HERE/loits_core.cpp" \
   -Wl,-soname,libquantom_loits_sycl.so \
   -o "$BUILD/libquantom_loits_sycl.so"
