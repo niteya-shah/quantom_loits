@@ -3,24 +3,27 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-usage: install-acpp.sh <install-prefix> [git-ref]
+usage: install-acpp.sh <install-prefix> <llvm-prefix> [git-ref]
 
-Build and install AdaptiveCpp from source using the upstream CMake flow.
-This script intentionally does not install OS packages, LLVM, CUDA, ROCm,
-or make machine-specific backend choices.
+Build and install AdaptiveCpp against an explicit LLVM installation.
+QuantOm intentionally does not fall back to a system LLVM here: the old
+artifact required a controlled LLVM toolchain, and this installer preserves
+that behavior without machine-specific paths.
 
 Examples:
-  ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp
-  ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp <tag-or-commit>
+  ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp /shared/toolchains/llvm-19.1.7
+  ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp /shared/toolchains/llvm-19.1.7 <tag-or-commit>
 
 Environment overrides:
-  ACPP_REF          git ref if the second positional argument is omitted
+  ACPP_REF          git ref if the third positional argument is omitted
   ACPP_WORKDIR      temporary source/build root
   ACPP_SOURCE_DIR   use an existing AdaptiveCpp checkout instead of cloning
   ACPP_JOBS         parallel build jobs (default: 4)
   ACPP_BUILD_TYPE   CMake build type (default: Release)
   ACPP_CMAKE_ARGS   additional whitespace-separated CMake arguments
   ACPP_REPO         repository URL
+  CUDA_PATH         optional CUDA toolkit root passed to AdaptiveCpp
+  ROCM_PATH         optional ROCm root passed to AdaptiveCpp
 USAGE
 }
 
@@ -29,13 +32,14 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -lt 2 || $# -gt 3 ]]; then
   usage
   exit 2
 fi
 
 PREFIX="$1"
-REF="${2:-${ACPP_REF:-}}"
+LLVM_PREFIX="$2"
+REF="${3:-${ACPP_REF:-}}"
 JOBS="${ACPP_JOBS:-4}"
 BUILD_TYPE="${ACPP_BUILD_TYPE:-Release}"
 REPO="${ACPP_REPO:-https://github.com/AdaptiveCpp/AdaptiveCpp.git}"
@@ -43,28 +47,38 @@ WORK_ROOT="${ACPP_WORKDIR:-${TMPDIR:-/tmp}/quantom-adaptivecpp-${USER:-user}}"
 SOURCE="${ACPP_SOURCE_DIR:-$WORK_ROOT/source}"
 BUILD="$WORK_ROOT/build"
 
-if [[ -z "$PREFIX" ]]; then
-  echo "install prefix must not be empty" >&2
-  exit 2
-fi
+[[ -n "$PREFIX" ]] || { echo "install prefix must not be empty" >&2; exit 2; }
+[[ -n "$LLVM_PREFIX" ]] || { echo "LLVM prefix must not be empty" >&2; exit 2; }
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "ACPP_JOBS must be a positive integer" >&2; exit 2; }
 
-if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ACPP_JOBS must be a positive integer" >&2
+LLVM_CLANG="$LLVM_PREFIX/bin/clang"
+LLVM_CLANGXX="$LLVM_PREFIX/bin/clang++"
+LLVM_DIR="$LLVM_PREFIX/lib/cmake/llvm"
+CLANG_DIR="$LLVM_PREFIX/lib/cmake/clang"
+
+for required in \
+  "$LLVM_CLANG" \
+  "$LLVM_CLANGXX" \
+  "$LLVM_DIR/LLVMConfig.cmake" \
+  "$CLANG_DIR/ClangConfig.cmake"; do
+  [[ -e "$required" ]] || {
+    echo "custom LLVM installation is incomplete: missing $required" >&2
+    echo "build it first with ./sycl/install-llvm.sh" >&2
+    exit 2
+  }
+done
+
+if ! compgen -G "$LLVM_PREFIX/lib/libLLVM.so*" >/dev/null; then
+  echo "custom LLVM installation is incomplete: no libLLVM.so under $LLVM_PREFIX/lib" >&2
   exit 2
 fi
 
 for tool in cmake python3; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "required tool not found: $tool" >&2
-    exit 127
-  fi
+  command -v "$tool" >/dev/null 2>&1 || { echo "required tool not found: $tool" >&2; exit 127; }
 done
 
 if [[ -z "${ACPP_SOURCE_DIR:-}" ]]; then
-  if ! command -v git >/dev/null 2>&1; then
-    echo "required tool not found: git" >&2
-    exit 127
-  fi
+  command -v git >/dev/null 2>&1 || { echo "required tool not found: git" >&2; exit 127; }
 
   if [[ ! -d "$SOURCE/.git" ]]; then
     mkdir -p "$(dirname "$SOURCE")"
@@ -75,10 +89,10 @@ if [[ -z "${ACPP_SOURCE_DIR:-}" ]]; then
     git -C "$SOURCE" fetch --tags origin
   fi
 else
-  if [[ ! -f "$SOURCE/CMakeLists.txt" ]]; then
+  [[ -f "$SOURCE/CMakeLists.txt" ]] || {
     echo "ACPP_SOURCE_DIR is not an AdaptiveCpp source tree: $SOURCE" >&2
     exit 2
-  fi
+  }
 fi
 
 if [[ -n "$REF" ]]; then
@@ -107,6 +121,12 @@ mkdir -p "$PREFIX"
 rm -rf "$BUILD"
 mkdir -p "$BUILD"
 
+# Preserve the important part of the old working setup: AdaptiveCpp is built
+# by, and linked against, the same controlled LLVM installation.
+export PATH="$LLVM_PREFIX/bin:$PATH"
+export LD_LIBRARY_PATH="$LLVM_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export ACPP_NVPTX_CLANG="$LLVM_CLANGXX"
+
 read -r -a EXTRA_CMAKE <<< "${ACPP_CMAKE_ARGS:-}"
 
 CMAKE_CMD=(
@@ -115,7 +135,20 @@ CMAKE_CMD=(
   -B "$BUILD"
   "-DCMAKE_BUILD_TYPE=$BUILD_TYPE"
   "-DCMAKE_INSTALL_PREFIX=$PREFIX"
+  "-DCMAKE_C_COMPILER=$LLVM_CLANG"
+  "-DCMAKE_CXX_COMPILER=$LLVM_CLANGXX"
+  "-DLLVM_DIR=$LLVM_DIR"
+  "-DClang_DIR=$CLANG_DIR"
+  -DACPP_COMPILER_FEATURE_PROFILE=full
 )
+
+if [[ -n "${CUDA_PATH:-}" ]]; then
+  CMAKE_CMD+=("-DCUDAToolkit_ROOT=$CUDA_PATH" "-DCUDA_TOOLKIT_ROOT_DIR=$CUDA_PATH")
+fi
+if [[ -n "${ROCM_PATH:-}" ]]; then
+  CMAKE_CMD+=("-DROCM_PATH=$ROCM_PATH")
+fi
+
 CMAKE_CMD+=("${EXTRA_CMAKE[@]}")
 
 printf 'Configuring AdaptiveCpp:'
@@ -131,10 +164,19 @@ if [[ ! -x "$ACPP" ]]; then
   exit 1
 fi
 
+cat > "$PREFIX/quantom-acpp-info.txt" <<INFO
+llvm_prefix=$LLVM_PREFIX
+adaptivecpp_ref=${REF:-un-pinned}
+adaptivecpp_commit=${COMMIT:-unknown}
+cuda_path=${CUDA_PATH:-}
+rocm_path=${ROCM_PATH:-}
+INFO
+
 echo
 echo "AdaptiveCpp installed successfully"
 echo "  prefix:   $PREFIX"
 echo "  compiler: $ACPP"
+echo "  LLVM:     $LLVM_PREFIX"
 "$ACPP" --acpp-version || true
 
 echo

@@ -45,40 +45,71 @@ List complete builds with:
 
     make list-sycl-builds
 
-## Install AdaptiveCpp
+## Install LLVM and AdaptiveCpp
 
-The repository includes a small general AdaptiveCpp source installer:
+The original artifact did **not** build AdaptiveCpp against an arbitrary system
+LLVM. It first built a controlled LLVM toolchain from source and then configured
+AdaptiveCpp to use that exact LLVM. The current scripts preserve that dependency
+without restoring any hostname/module-specific logic.
 
-    ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp
+First build LLVM. The target set is explicit:
 
-To pin the toolchain for reproducible experiments, pass a tag or commit:
+    make install-llvm \
+        LLVM_PREFIX=/shared/toolchains/llvm-19.1.7 \
+        LLVM_TARGETS=cpu,cuda \
+        LLVM_VERSION=19.1.7
 
-    ./sycl/install-acpp.sh /shared/toolchains/adaptivecpp <tag-or-commit>
+or directly:
 
-The Makefile wrapper is equivalent:
+    ./sycl/install-llvm.sh \
+        /shared/toolchains/llvm-19.1.7 \
+        cpu,cuda \
+        19.1.7
+
+`cpu` builds X86, `cuda` additionally builds NVPTX, and `hip` additionally builds
+AMDGPU. The installer builds Clang, clang-tools-extra, LLD, the OpenMP/offload
+runtimes, compiler-rt, libc++, libc++abi, libunwind, and a shared `libLLVM`.
+This is the important toolchain shape used by the previous working setup.
+
+Useful LLVM overrides include:
+
+    LLVM_WORKDIR=/scratch/me/llvm-build
+    LLVM_SOURCE_DIR=/path/to/existing/llvm-project
+    LLVM_JOBS=16
+    LLVM_LINK_JOBS=2
+    LLVM_C_COMPILER=/path/to/gcc
+    LLVM_CXX_COMPILER=/path/to/g++
+    CUDA_PATH=/path/to/cuda
+    ROCM_PATH=/path/to/rocm
+    CUDA_ARCH=sm_80
+    HIP_ARCH=gfx90a
+
+No vendor path or GPU architecture is guessed unless it can be derived from a
+compiler already on `PATH`. Cluster-specific module loads and paths remain the
+responsibility of the job environment.
+
+Then build AdaptiveCpp against that explicit LLVM prefix:
 
     make install-acpp \
+        LLVM_PREFIX=/shared/toolchains/llvm-19.1.7 \
         ACPP_PREFIX=/shared/toolchains/adaptivecpp \
         ACPP_REF=<tag-or-commit>
 
-The installer intentionally contains no package-manager commands, module loads,
-hardware detection, or machine-specific compiler paths. It performs the normal
-AdaptiveCpp CMake configure/build/install sequence only. The machine must already
-provide AdaptiveCpp's build dependencies and whichever vendor stacks are needed
-for the targets that installation should support.
+or directly:
 
-Useful environment overrides are:
+    ./sycl/install-acpp.sh \
+        /shared/toolchains/adaptivecpp \
+        /shared/toolchains/llvm-19.1.7 \
+        <tag-or-commit>
 
-    ACPP_WORKDIR=/scratch/me/acpp-build
-    ACPP_SOURCE_DIR=/path/to/existing/AdaptiveCpp
-    ACPP_JOBS=8
-    ACPP_BUILD_TYPE=Release
-    ACPP_CMAKE_ARGS="-DLLVM_DIR=/path/to/llvm/lib/cmake/llvm ..."
+AdaptiveCpp does not fall back to a system LLVM. Its C and C++ compilers,
+`LLVM_DIR`, `Clang_DIR`, runtime library path, and compiler feature profile are
+all tied to the supplied LLVM installation.
 
-`ACPP_SOURCE_DIR` is useful on clusters where compute nodes do not have outbound
-network access. `ACPP_CMAKE_ARGS` is the escape hatch for the LLVM/CUDA/ROCm
-configuration we determine for a particular cluster; those settings are not
-hard-coded into this repository.
+`ACPP_SOURCE_DIR` and `LLVM_SOURCE_DIR` are useful on clusters where compute
+nodes do not have outbound network access. `ACPP_CMAKE_ARGS` and
+`LLVM_CMAKE_ARGS` remain escape hatches for settings we discover are needed on
+the current cluster.
 
 After installation either put `bin/` on `PATH`, set `ACPP_CXX` directly, or set:
 

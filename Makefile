@@ -11,13 +11,17 @@ SEED ?= 0
 SYCL_VARIANT ?=
 SYCL_TARGET ?=
 SYCL_ARCH ?=
+LLVM_PREFIX ?=
+LLVM_TARGETS ?=
+LLVM_VERSION ?=
+LLVM_JOBS ?= 4
 ACPP_PREFIX ?=
 ACPP_REF ?=
 ACPP_JOBS ?= 4
 
 .PHONY: all \
         build build-all build-cpp build-openmp \
-        install-acpp build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
+        install-llvm install-acpp build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
         test test-pytorch test-cpp test-openmp test-sycl test-rng \
         benchmark profile list-backends compile-check \
         plots plot-cpu plot-gpu plot-ss plot-ws \
@@ -39,12 +43,19 @@ build-cpp:
 build-openmp:
 	$(PYTHON) -m openmp.build
 
-# Generic AdaptiveCpp source install. This intentionally does not install
-# system packages, LLVM, CUDA, or ROCm; provide those through the environment
-# available on the machine where AdaptiveCpp is built.
+# AdaptiveCpp uses a controlled source-built LLVM toolchain, as in the
+# original artifact, but without any hostname/module assumptions. LLVM target
+# selection is explicit.
+install-llvm:
+	@test -n "$(LLVM_PREFIX)" || { echo "LLVM_PREFIX is required" >&2; exit 2; }
+	@test -n "$(LLVM_TARGETS)" || { echo "LLVM_TARGETS is required (cpu,cuda,hip or a comma-separated combination)" >&2; exit 2; }
+	@test -n "$(LLVM_VERSION)" || { echo "LLVM_VERSION is required" >&2; exit 2; }
+	LLVM_JOBS="$(LLVM_JOBS)" ./sycl/install-llvm.sh "$(LLVM_PREFIX)" "$(LLVM_TARGETS)" "$(LLVM_VERSION)"
+
 install-acpp:
 	@test -n "$(ACPP_PREFIX)" || { echo "ACPP_PREFIX is required" >&2; exit 2; }
-	ACPP_REF="$(ACPP_REF)" ACPP_JOBS="$(ACPP_JOBS)" ./sycl/install-acpp.sh "$(ACPP_PREFIX)"
+	@test -n "$(LLVM_PREFIX)" || { echo "LLVM_PREFIX is required; AdaptiveCpp does not fall back to system LLVM" >&2; exit 2; }
+	ACPP_REF="$(ACPP_REF)" ACPP_JOBS="$(ACPP_JOBS)" ./sycl/install-acpp.sh "$(ACPP_PREFIX)" "$(LLVM_PREFIX)"
 
 # Examples:
 #   make build-sycl-acpp SYCL_VARIANT=acpp-a100 SYCL_TARGET=cuda SYCL_ARCH=sm_80
