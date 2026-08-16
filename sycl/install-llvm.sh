@@ -12,22 +12,21 @@ Build an official released LLVM toolchain for AdaptiveCpp.
   cuda  additionally build the NVPTX target
   hip   additionally build the AMDGPU target
 
-The version must name an official LLVM release, e.g. 21.1.0. By default the
-script checks out the matching llvmorg-<version> tag. AdaptiveCpp does not
-support unreleased/development LLVM versions.
+The version must name an official LLVM release, e.g. 20.1.8. Source download is
+separate from this build step; set LLVM_SOURCE_DIR to a checkout prepared by
+fetch-llvm.sh. The build directory is preserved so interrupted Ninja builds resume.
 
 Environment overrides:
-  LLVM_WORKDIR          source/build root; use cluster scratch for large builds
-  LLVM_SOURCE_DIR       existing llvm-project checkout/source tree
-  LLVM_REF              explicit llvm-project git ref instead of llvmorg-<version>
+  LLVM_WORKDIR          persistent build root; use cluster scratch if desired
+  LLVM_SOURCE_DIR       llvm-project checkout prepared by fetch-llvm.sh (required)
+  LLVM_REF              source ref recorded in metadata (default llvmorg-<version>)
   LLVM_JOBS             parallel build jobs (default: 4)
   LLVM_LINK_JOBS        optional LLVM_PARALLEL_LINK_JOBS value
   LLVM_BUILD_TYPE       CMake build type (default: Release)
   LLVM_C_COMPILER       host C compiler (default: gcc from PATH)
   LLVM_CXX_COMPILER     host C++ compiler (default: g++ from PATH)
   LLVM_CMAKE_ARGS       additional whitespace-separated CMake arguments
-  LLVM_ALLOW_UNSUPPORTED allow a release outside the currently documented 15--21 window
-  LLVM_REPO             llvm-project repository URL
+  LLVM_ALLOW_UNSUPPORTED allow a release outside the AdaptiveCpp 25.10 LLVM 15--20 window
 USAGE
 }
 
@@ -47,9 +46,8 @@ VERSION="$3"
 REF="${LLVM_REF:-llvmorg-${VERSION}}"
 JOBS="${LLVM_JOBS:-4}"
 BUILD_TYPE="${LLVM_BUILD_TYPE:-Release}"
-REPO="${LLVM_REPO:-https://github.com/llvm/llvm-project.git}"
 WORK_ROOT="${LLVM_WORKDIR:-${TMPDIR:-/tmp}/quantom-llvm-${VERSION}-${USER:-user}}"
-SOURCE="${LLVM_SOURCE_DIR:-$WORK_ROOT/source}"
+SOURCE="${LLVM_SOURCE_DIR:-}"
 BUILD="$WORK_ROOT/build"
 CC_BIN="${LLVM_C_COMPILER:-$(command -v gcc || true)}"
 CXX_BIN="${LLVM_CXX_COMPILER:-$(command -v g++ || true)}"
@@ -62,12 +60,11 @@ if [[ ! "$LLVM_MAJOR" =~ ^[0-9]+$ ]]; then
   echo "LLVM version must begin with a numeric major release: $VERSION" >&2
   exit 2
 fi
-# AdaptiveCpp's current documentation supports official LLVM releases 15--21.
-# Keep the controlled toolchain inside that supported window unless a future
-# AdaptiveCpp update is being tested deliberately.
-if (( LLVM_MAJOR < 15 || LLVM_MAJOR > 21 )) && [[ "${LLVM_ALLOW_UNSUPPORTED:-0}" != "1" ]]; then
-  echo "LLVM $VERSION is outside AdaptiveCpp's currently documented LLVM 15--21 support window." >&2
-  echo "Set LLVM_ALLOW_UNSUPPORTED=1 only when intentionally testing a newer/older AdaptiveCpp-supported LLVM." >&2
+# AdaptiveCpp v25.10.0 rejects LLVM >20 unless ACPP_EXPERIMENTAL_LLVM is enabled.
+# QuantOm therefore defaults to the released/supported LLVM 20 line.
+if (( LLVM_MAJOR < 15 || LLVM_MAJOR > 20 )) && [[ "${LLVM_ALLOW_UNSUPPORTED:-0}" != "1" ]]; then
+  echo "LLVM $VERSION is outside the AdaptiveCpp v25.10 supported LLVM 15--20 window." >&2
+  echo "Set LLVM_ALLOW_UNSUPPORTED=1 only for an intentional experimental build." >&2
   exit 2
 fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "LLVM_JOBS must be a positive integer" >&2; exit 2; }
@@ -102,30 +99,29 @@ for target in "${LLVM_TARGETS[@]}"; do
 done
 LLVM_TARGETS_CMAKE="$(IFS=';'; echo "${UNIQUE_TARGETS[*]}")"
 
-if [[ -z "${LLVM_SOURCE_DIR:-}" ]]; then
-  command -v git >/dev/null 2>&1 || { echo "required tool not found: git" >&2; exit 127; }
-  if [[ ! -d "$SOURCE/.git" ]]; then
-    mkdir -p "$(dirname "$SOURCE")"
-    echo "Cloning LLVM ref $REF from $REPO"
-    git clone --filter=blob:none --no-checkout "$REPO" "$SOURCE"
-  fi
-  git -C "$SOURCE" fetch --depth 1 origin "$REF"
-  git -C "$SOURCE" checkout --detach FETCH_HEAD
-else
-  [[ -f "$SOURCE/llvm/CMakeLists.txt" ]] || {
-    echo "LLVM_SOURCE_DIR is not an llvm-project source tree: $SOURCE" >&2
-    exit 2
-  }
-fi
+[[ -n "$SOURCE" ]] || {
+  echo "LLVM_SOURCE_DIR is required for the build step." >&2
+  echo "Download once with ./sycl/fetch-llvm.sh <source-dir> $VERSION" >&2
+  exit 2
+}
+[[ -f "$SOURCE/llvm/CMakeLists.txt" ]] || {
+  echo "LLVM_SOURCE_DIR is not an llvm-project source tree: $SOURCE" >&2
+  echo "Run ./sycl/fetch-llvm.sh before building." >&2
+  exit 2
+}
 
 COMMIT="unknown"
-if [[ -d "$SOURCE/.git" ]]; then
+if [[ -d "$SOURCE/.git" ]] && command -v git >/dev/null 2>&1; then
   COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
 fi
 
-mkdir -p "$PREFIX"
-rm -rf "$BUILD"
-mkdir -p "$BUILD"
+mkdir -p "$PREFIX" "$BUILD"
+
+if [[ -f "$BUILD/CMakeCache.txt" ]]; then
+  echo "Resuming existing LLVM build directory: $BUILD"
+else
+  echo "Creating LLVM build directory: $BUILD"
+fi
 
 read -r -a EXTRA_CMAKE <<< "${LLVM_CMAKE_ARGS:-}"
 

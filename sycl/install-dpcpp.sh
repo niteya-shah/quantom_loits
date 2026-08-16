@@ -25,14 +25,13 @@ Examples:
 
 Environment overrides:
   DPCPP_REF             git ref if the third positional argument is omitted
-  DPCPP_WORKDIR         source root; use cluster scratch for the checkout
-  DPCPP_SOURCE_DIR      existing intel/llvm checkout instead of cloning
+  DPCPP_WORKDIR         build/work root
+  DPCPP_SOURCE_DIR      intel/llvm checkout prepared by fetch-dpcpp.sh (required)
   DPCPP_JOBS            parallel build jobs (default: 4)
   DPCPP_BUILD_TYPE      Debug or Release (default: Release)
   DPCPP_HOST_CC         host C compiler (default: gcc from PATH)
   DPCPP_HOST_CXX        host C++ compiler (default: g++ from PATH)
   DPCPP_CONFIGURE_ARGS  extra whitespace-separated configure.py arguments
-  DPCPP_REPO            repository URL
   CUDA_PATH             CUDA toolkit root for a non-default CUDA installation
   ROCM_PATH             ROCm root for a non-default ROCm installation
 USAGE
@@ -53,9 +52,8 @@ TARGET_SPEC="$2"
 REF="${3:-${DPCPP_REF:-}}"
 JOBS="${DPCPP_JOBS:-4}"
 BUILD_TYPE="${DPCPP_BUILD_TYPE:-Release}"
-REPO="${DPCPP_REPO:-https://github.com/intel/llvm.git}"
 WORK_ROOT="${DPCPP_WORKDIR:-${TMPDIR:-/tmp}/quantom-dpcpp-${USER:-user}}"
-SOURCE="${DPCPP_SOURCE_DIR:-$WORK_ROOT/source}"
+SOURCE="${DPCPP_SOURCE_DIR:-}"
 CC_BIN="${DPCPP_HOST_CC:-$(command -v gcc || true)}"
 CXX_BIN="${DPCPP_HOST_CXX:-$(command -v g++ || true)}"
 
@@ -66,7 +64,7 @@ case "$BUILD_TYPE" in Debug|Release) ;; *) echo "DPCPP_BUILD_TYPE must be Debug 
 [[ -n "$CC_BIN" && -x "$CC_BIN" ]] || { echo "host C compiler not found; set DPCPP_HOST_CC" >&2; exit 127; }
 [[ -n "$CXX_BIN" && -x "$CXX_BIN" ]] || { echo "host C++ compiler not found; set DPCPP_HOST_CXX" >&2; exit 127; }
 
-for tool in git python cmake ninja; do
+for tool in python cmake ninja; do
   command -v "$tool" >/dev/null 2>&1 || { echo "required tool not found: $tool" >&2; exit 127; }
 done
 
@@ -97,40 +95,28 @@ if (( WANT_HIP )) && [[ -n "${ROCM_PATH:-}" && ! -d "$ROCM_PATH" ]]; then
   exit 2
 fi
 
-if [[ -z "${DPCPP_SOURCE_DIR:-}" ]]; then
-  if [[ ! -d "$SOURCE/.git" ]]; then
-    mkdir -p "$(dirname "$SOURCE")"
-    git clone --filter=blob:none --branch sycl "$REPO" "$SOURCE"
-  fi
-  git -C "$SOURCE" fetch origin sycl
-else
-  [[ -f "$SOURCE/buildbot/configure.py" && -f "$SOURCE/buildbot/compile.py" ]] || {
-    echo "DPCPP_SOURCE_DIR is not an intel/llvm source tree: $SOURCE" >&2
+[[ -n "$SOURCE" ]] || {
+  echo "DPCPP_SOURCE_DIR is required for the build step." >&2
+  echo "Download once with ./sycl/fetch-dpcpp.sh <source-dir> <git-ref>" >&2
+  exit 2
+}
+[[ -f "$SOURCE/buildbot/configure.py" && -f "$SOURCE/buildbot/compile.py" ]] || {
+  echo "DPCPP_SOURCE_DIR is not an intel/llvm source tree: $SOURCE" >&2
+  echo "Run ./sycl/fetch-dpcpp.sh before building." >&2
+  exit 2
+}
+if [[ -n "$REF" && -f "$SOURCE/.quantom-requested-ref" ]]; then
+  CACHED_REF="$(cat "$SOURCE/.quantom-requested-ref")"
+  if [[ "$CACHED_REF" != "$REF" ]]; then
+    echo "DPC++ source cache contains ref '$CACHED_REF', requested '$REF'." >&2
+    echo "Run ./sycl/fetch-dpcpp.sh '$SOURCE' '$REF' before building." >&2
     exit 2
-  }
-fi
-
-if [[ -n "$REF" ]]; then
-  if [[ -z "${DPCPP_SOURCE_DIR:-}" ]]; then
-    git -C "$SOURCE" fetch origin "$REF"
-    git -C "$SOURCE" checkout --detach FETCH_HEAD
-  else
-    git -C "$SOURCE" rev-parse --verify --quiet "${REF}^{commit}" >/dev/null || {
-      echo "DPC++ git ref not found locally: $REF" >&2
-      echo "If using DPCPP_SOURCE_DIR, fetch the ref first." >&2
-      exit 2
-    }
-    git -C "$SOURCE" checkout --detach "$REF"
-  fi
-else
-  if [[ -z "${DPCPP_SOURCE_DIR:-}" ]]; then
-    git -C "$SOURCE" checkout -B sycl origin/sycl
   fi
 fi
 
 COMMIT="unknown"
 DESCRIBE=""
-if [[ -d "$SOURCE/.git" ]]; then
+if [[ -d "$SOURCE/.git" ]] && command -v git >/dev/null 2>&1; then
   COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
   DESCRIBE="$(git -C "$SOURCE" describe --always --dirty --tags 2>/dev/null || true)"
 fi
