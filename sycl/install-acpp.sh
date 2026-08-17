@@ -163,6 +163,8 @@ if [[ -n "${ACPP_GCC_INSTALL_DIR:-}" ]]; then
   CMAKE_CMD+=(
     "-DCMAKE_C_FLAGS=$GCC_DRIVER_FLAG"
     "-DCMAKE_CXX_FLAGS=$GCC_DRIVER_FLAG"
+    "-DCMAKE_EXE_LINKER_FLAGS=$GCC_DRIVER_FLAG"
+    "-DCMAKE_SHARED_LINKER_FLAGS=$GCC_DRIVER_FLAG"
   )
 fi
 
@@ -183,6 +185,16 @@ printf 'Configuring AdaptiveCpp:'
 printf ' %q' "${CMAKE_CMD[@]}"
 printf '\n'
 "${CMAKE_CMD[@]}"
+
+if [[ -n "${ACPP_GCC_INSTALL_DIR:-}" ]]; then
+  for cache_var in CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS; do
+    if ! grep -Fq "${cache_var}:STRING=--gcc-install-dir=$ACPP_GCC_INSTALL_DIR" "$BUILD/CMakeCache.txt"; then
+      echo "ERROR: CMake did not retain the requested GCC selection in $cache_var." >&2
+      echo "Expected --gcc-install-dir=$ACPP_GCC_INSTALL_DIR" >&2
+      exit 2
+    fi
+  done
+fi
 
 cmake --build "$BUILD" --target install --parallel "$JOBS"
 

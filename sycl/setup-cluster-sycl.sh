@@ -304,6 +304,9 @@ print_config() {
     echo "source root:         $TOOLCHAIN_SOURCE_ROOT"
     echo "work root:           $TOOLCHAIN_WORK_ROOT"
     if [[ "$SITE" != "aurora" ]]; then
+        echo "host gcc:            ${LLVM_C_COMPILER:-}"
+        echo "host g++:            ${LLVM_CXX_COMPILER:-}"
+        echo "GCC install dir:     ${ACPP_GCC_INSTALL_DIR:-}"
         echo "LLVM:                $LLVM_VERSION"
         echo "LLVM source:         $LLVM_SOURCE_DIR"
         echo "LLVM prefix:         $LLVM_PREFIX"
@@ -426,6 +429,7 @@ case "$SITE" in
 esac
 
 if [[ "$SITE" != "aurora" ]]; then
+    configure_host_gcc
     resolve_vendor_paths
 fi
 
