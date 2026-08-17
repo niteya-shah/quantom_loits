@@ -39,11 +39,11 @@ modules_polaris() {
 }
 
 modules_odyssey() {
-+       module load gcc/13.2
-+       module load cmake/3.31.1
-+       module load boost/1.75
-+       module load hwloc/2.4.0
-+       module load rocm/7.2.4
+       module load gcc/13.2
+       module load cmake/3.31.1
+       module load boost/1.75
+       module load hwloc/2.4.0
+       module load rocm/7.2.4
    :
 }
 
