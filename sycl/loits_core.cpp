@@ -21,8 +21,24 @@ namespace {
 
 #if defined(QUANTOM_DPCPP_HIP)
 constexpr auto kHipBackend = sycl::backend::ext_oneapi_hip;
-using HipNativeDevice = sycl::backend_input_t<kHipBackend, sycl::device>;
 using HipNativeQueue = sycl::backend_input_t<kHipBackend, sycl::queue>;
+
+sycl::device hip_device_for_index(int device_index) {
+  int visible_index = 0;
+  for (const auto& platform : sycl::platform::get_platforms()) {
+    if (platform.get_backend() != kHipBackend) continue;
+    for (const auto& device :
+         platform.get_devices(sycl::info::device_type::gpu)) {
+      if (visible_index == device_index) return device;
+      ++visible_index;
+    }
+  }
+
+  throw std::runtime_error(
+      "DPC++ HIP could not resolve PyTorch device index " +
+      std::to_string(device_index) + " among " +
+      std::to_string(visible_index) + " visible HIP device(s)");
+}
 
 struct TorchQueueState {
   int device_index = -1;
@@ -49,7 +65,7 @@ sycl::queue& get_queue() {
 sycl::device info_device() {
   auto& state = torch_queue_state();
   if (state.device) return *state.device;
-  return sycl::make_device<kHipBackend>(static_cast<HipNativeDevice>(0));
+  return hip_device_for_index(0);
 }
 #else
 sycl::queue& get_queue() {
@@ -111,8 +127,7 @@ void bind_torch_stream(uintptr_t native_stream, int device_index) {
     state.context.reset();
     state.device.reset();
 
-    state.device.emplace(sycl::make_device<kHipBackend>(
-        static_cast<HipNativeDevice>(device_index)));
+    state.device.emplace(hip_device_for_index(device_index));
     state.context.emplace(*state.device);
     state.device_index = device_index;
     state.stream_handle = 0;
