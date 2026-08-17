@@ -54,6 +54,7 @@ modules_illyad() {
     # Illyad is a mixed-vendor node. For this site entry we intentionally target
     # only its NVIDIA H100. Load CUDA/GCC modules here if they are not already
     # present in the login environment. CUDA_PATH is auto-detected from nvcc.
+    module load cuda/12.9
     :
 }
 
