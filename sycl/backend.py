@@ -214,6 +214,24 @@ def load_extension(verbose=False, allow_incomplete=False):
     return _EXTENSION
 
 
+def bind_torch_stream(extension, device):
+    """Bind DPC++/HIP execution to PyTorch's current native HIP stream."""
+    if configured_toolchain() != "dpcpp" or configured_target() != "hip":
+        return
+
+    device = torch.device(device)
+    if device.type != "cuda":
+        raise RuntimeError(
+            f"DPC++ HIP stream interop requires a torch cuda/ROCm device, got {device}"
+        )
+
+    device_index = device.index
+    if device_index is None:
+        device_index = torch.cuda.current_device()
+    stream = torch.cuda.current_stream(device_index)
+    extension.bind_torch_stream(int(stream.cuda_stream), int(device_index))
+
+
 def _region(enabled, name):
     return record_function(name) if enabled else nullcontext()
 
@@ -231,8 +249,10 @@ class _SYCLLOITSFunction(torch.autograd.Function):
     def forward(ctx, x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance, n_events, seed, sequence, profile_regions):
         profile_regions = bool(profile_regions)
         _sync_torch(xsec_x.device)
+        extension = load_extension()
+        bind_torch_stream(extension, xsec_x.device)
         with _region(profile_regions, "loits::binding::forward"):
-            state = load_extension().forward(
+            state = extension.forward(
                 x_bins,
                 xsec_x,
                 q2_bins,
@@ -255,8 +275,10 @@ class _SYCLLOITSFunction(torch.autograd.Function):
             x_bins, xsec_x, q2_bins, xsec_q2, acceptance, *saved = ctx.saved_tensors
             grad_events = grad_events.contiguous()
             _sync_torch(grad_events.device)
+            extension = load_extension()
+            bind_torch_stream(extension, grad_events.device)
             with _region(ctx.profile_regions, "loits::binding::backward"):
-                grad_xsec_x, grad_xsec_q2 = load_extension().backward(
+                grad_xsec_x, grad_xsec_q2 = extension.backward(
                     grad_events,
                     x_bins,
                     xsec_x,
@@ -281,6 +303,7 @@ class SYCLLOITS(nn.Module):
         self.seed = torch.initial_seed()
         self.sequence = 0
         extension = load_extension()
+        bind_torch_stream(extension, self.device)
         if not extension.supports_fp64():
             raise RuntimeError(f"selected SYCL device does not support float64: {extension.device_name()}")
 

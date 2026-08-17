@@ -300,5 +300,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("backward", &backward);
   m.def("device_name", []() { return std::string(sycl_loits::device_name()); });
   m.def("supports_fp64", &sycl_loits::supports_fp64);
+  m.def("bind_torch_stream", &sycl_loits::bind_torch_stream);
   m.def("synchronize", &sycl_loits::synchronize);
 }

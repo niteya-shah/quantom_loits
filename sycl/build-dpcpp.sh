@@ -72,7 +72,7 @@ case "$MODE" in
     [[ -n "$ARCH" ]] || { echo "HIP architecture is required, e.g. gfx90a" >&2; usage; exit 2; }
     CXX="$(resolve_cxx "${DPCPP_HIP_CXX:-}" clang++)"
     TARGET="amdgcn-amd-amdhsa"
-    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend "--offload-arch=$ARCH")
+    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend "--offload-arch=$ARCH" -DQUANTOM_DPCPP_HIP=1)
     TORCH_DEVICE="cuda"
     ;;
   *)

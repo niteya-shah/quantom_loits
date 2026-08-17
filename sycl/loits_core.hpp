@@ -30,6 +30,7 @@ struct Allocation {
 
 const char* device_name();
 bool supports_fp64();
+void bind_torch_stream(uintptr_t native_stream, int device_index);
 void synchronize();
 
 Allocation allocate_counts(const double* QUANTOM_RESTRICT weights,
