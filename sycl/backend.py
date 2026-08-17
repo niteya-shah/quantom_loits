@@ -14,6 +14,7 @@ _EXTENSION = None
 _CORE_HANDLE = None
 _LOADED_VARIANT = None
 _VARIANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
+_DPCPP_HIP_BRIDGE_STREAMS = {}
 
 
 def _root():
@@ -214,8 +215,22 @@ def load_extension(verbose=False, allow_incomplete=False):
     return _EXTENSION
 
 
+def _dpcpp_hip_bridge_stream(device_index):
+    """Return a persistent PyTorch-owned non-default HIP stream."""
+    stream = _DPCPP_HIP_BRIDGE_STREAMS.get(device_index)
+    if stream is None:
+        stream = torch.cuda.Stream(device=device_index)
+        native_stream = int(stream.cuda_stream)
+        if native_stream == 0:
+            raise RuntimeError(
+                "PyTorch returned the default/null HIP stream for the DPC++ bridge"
+            )
+        _DPCPP_HIP_BRIDGE_STREAMS[device_index] = stream
+    return stream
+
+
 def bind_torch_stream(extension, device):
-    """Bind DPC++/HIP execution to PyTorch's current native HIP stream."""
+    """Bind DPC++/HIP execution to a PyTorch-owned native HIP stream."""
     if configured_toolchain() != "dpcpp" or configured_target() != "hip":
         return
 
@@ -228,8 +243,23 @@ def bind_torch_stream(extension, device):
     device_index = device.index
     if device_index is None:
         device_index = torch.cuda.current_device()
+
     stream = torch.cuda.current_stream(device_index)
-    extension.bind_torch_stream(int(stream.cuda_stream), int(device_index))
+    native_stream = int(stream.cuda_stream)
+
+    # DPC++'s UR HIP adapter calls hipStreamGetFlags() while importing a
+    # native queue. HIP rejects the legacy/default null stream handle (0), so
+    # use a persistent non-default stream allocated and owned by PyTorch.
+    #
+    # LOITS is intentionally synchronous at this boundary: callers synchronize
+    # PyTorch before entering the native backend, and the native forward/backward
+    # paths wait for the SYCL queue before returning. Therefore a bridge stream
+    # preserves ordering without changing the backend's execution semantics.
+    if native_stream == 0:
+        stream = _dpcpp_hip_bridge_stream(device_index)
+        native_stream = int(stream.cuda_stream)
+
+    extension.bind_torch_stream(native_stream, int(device_index))
 
 
 def _region(enabled, name):
