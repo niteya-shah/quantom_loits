@@ -11,6 +11,9 @@ set -euo pipefail
 #   ./sycl/setup-cluster-sycl.sh odyssey fetch all
 #   ./sycl/setup-cluster-sycl.sh odyssey build all
 #
+#   ./sycl/setup-cluster-sycl.sh illyad fetch acpp
+#   ./sycl/setup-cluster-sycl.sh illyad build acpp
+#
 # Fetching is network-facing and idempotent. Building performs no git fetch or
 # clone. LLVM and AdaptiveCpp build directories are preserved, so rerunning an
 # interrupted build resumes the existing Ninja/CMake build instead of deleting it.
@@ -47,6 +50,13 @@ modules_odyssey() {
    :
 }
 
+modules_illyad() {
+    # Illyad is a mixed-vendor node. For this site entry we intentionally target
+    # only its NVIDIA H100. Load CUDA/GCC modules here if they are not already
+    # present in the login environment. CUDA_PATH is auto-detected from nvcc.
+    :
+}
+
 modules_aurora() {
     # Load/source Aurora's site-supported oneAPI/DPC++ environment here.
     # AdaptiveCpp is intentionally not built on Aurora.
@@ -59,13 +69,15 @@ modules_aurora() {
 
 usage() {
     cat >&2 <<'USAGE'
-usage: ./sycl/setup-cluster-sycl.sh <polaris|odyssey|aurora> <fetch|build> [all|acpp|dpcpp]
+usage: ./sycl/setup-cluster-sycl.sh <polaris|odyssey|illyad|aurora> <fetch|build> [all|acpp|dpcpp]
 
 Examples:
   ./sycl/setup-cluster-sycl.sh polaris fetch all
   ./sycl/setup-cluster-sycl.sh polaris build all
   ./sycl/setup-cluster-sycl.sh odyssey fetch acpp
   ./sycl/setup-cluster-sycl.sh odyssey build acpp
+  ./sycl/setup-cluster-sycl.sh illyad fetch acpp
+  ./sycl/setup-cluster-sycl.sh illyad build acpp
   ./sycl/setup-cluster-sycl.sh aurora build dpcpp
 
 fetch:
@@ -137,6 +149,14 @@ case "$SITE" in
         DPCPP_TARGETS=hip
         ACPP_VARIANT=acpp-odyssey-mi300a
         DPCPP_VARIANT=dpcpp-odyssey-mi300a
+        ;;
+    illyad)
+        GPU_BACKEND=cuda
+        GPU_ARCH=sm_90
+        LLVM_TARGETS=cpu,cuda
+        DPCPP_TARGETS=cuda
+        ACPP_VARIANT=acpp-illyad-h100
+        DPCPP_VARIANT=dpcpp-illyad-h100
         ;;
     aurora)
         GPU_BACKEND=xpu
@@ -273,7 +293,7 @@ resolve_vendor_paths() {
             fi
         fi
         [[ -n "${CUDA_PATH:-}" && -d "$CUDA_PATH" ]] || {
-            echo "ERROR: CUDA_PATH could not be resolved; update modules_polaris()." >&2
+            echo "ERROR: CUDA_PATH could not be resolved; update modules_${SITE}()." >&2
             exit 2
         }
     elif [[ "$GPU_BACKEND" == "hip" ]]; then
@@ -425,6 +445,7 @@ fi
 case "$SITE" in
     polaris) modules_polaris ;;
     odyssey) modules_odyssey ;;
+    illyad)  modules_illyad ;;
     aurora)  modules_aurora ;;
 esac
 
