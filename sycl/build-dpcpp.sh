@@ -88,6 +88,27 @@ if ! command -v "$CXX" >/dev/null 2>&1; then
   exit 127
 fi
 
+LIBSPIRV_FLAGS=()
+if [[ "$MODE" == "hip" ]]; then
+  if [[ -n "${DPCPP_LIBSPIRV_PATH:-}" ]]; then
+    LIBSPIRV="$DPCPP_LIBSPIRV_PATH"
+  else
+    RESOURCE_DIR="$("$CXX" -print-resource-dir)"
+    LIBSPIRV="$RESOURCE_DIR/lib/amdgcn-amd-amdhsa-llvm/libspirv.l64.signed_char.bc"
+  fi
+
+  if [[ ! -f "$LIBSPIRV" ]]; then
+    echo "DPC++ HIP libspirv not found: $LIBSPIRV" >&2
+    echo "compiler: $CXX" >&2
+    echo "resource dir: ${RESOURCE_DIR:-<DPCPP_LIBSPIRV_PATH override>}" >&2
+    echo "set DPCPP_LIBSPIRV_PATH to the full libspirv.l64.signed_char.bc path if needed" >&2
+    exit 2
+  fi
+
+  echo "DPC++ HIP libspirv: $LIBSPIRV"
+  LIBSPIRV_FLAGS+=("-fsycl-libspirv-path=$LIBSPIRV")
+fi
+
 rm -f \
   "$BUILD/libquantom_loits_sycl.so" \
   "$BUILD/toolchain.txt" \
@@ -103,6 +124,7 @@ fi
 "$CXX" \
   -O3 -std=c++17 -DNDEBUG -fPIC -shared \
   "${TARGET_FLAGS[@]}" \
+  "${LIBSPIRV_FLAGS[@]}" \
   -I"$ROOT" \
   "${EXTRA[@]}" \
   "${RPATH_FLAGS[@]}" \
