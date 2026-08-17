@@ -21,6 +21,9 @@ Environment overrides:
   ACPP_JOBS         parallel build jobs (default: 4)
   ACPP_BUILD_TYPE   CMake build type (default: Release)
   ACPP_CMAKE_ARGS   additional whitespace-separated CMake arguments
+  ACPP_GCC_INSTALL_DIR
+                    GCC installation selected for Clang's host C/C++ runtime.
+                    The cluster helper derives this from g++ on PATH.
   CUDA_PATH         optional CUDA toolkit root passed to AdaptiveCpp
   ROCM_PATH         optional ROCm root passed to AdaptiveCpp
   ACPP_EXPERIMENTAL_LLVM set to 1 to pass -DACPP_EXPERIMENTAL_LLVM=ON for LLVM >20
@@ -131,6 +134,11 @@ fi
 export PATH="$LLVM_PREFIX/bin:$PATH"
 export LD_LIBRARY_PATH="$LLVM_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+if [[ -n "${ACPP_GCC_INSTALL_DIR:-}" && ! -d "$ACPP_GCC_INSTALL_DIR" ]]; then
+  echo "ACPP_GCC_INSTALL_DIR does not exist: $ACPP_GCC_INSTALL_DIR" >&2
+  exit 2
+fi
+
 read -r -a EXTRA_CMAKE <<< "${ACPP_CMAKE_ARGS:-}"
 
 CMAKE_CMD=(
@@ -145,6 +153,18 @@ CMAKE_CMD=(
   "-DCLANG_EXECUTABLE_PATH=$LLVM_CLANGXX"
   -DACPP_COMPILER_FEATURE_PROFILE=full
 )
+
+# The custom Clang used to build AdaptiveCpp can otherwise discover a different
+# system GCC than the one selected by the cluster module environment. Pin the
+# GCC installation explicitly so crt objects, libgcc, libstdc++, and headers
+# all come from the intended host GCC.
+if [[ -n "${ACPP_GCC_INSTALL_DIR:-}" ]]; then
+  GCC_DRIVER_FLAG="--gcc-install-dir=$ACPP_GCC_INSTALL_DIR"
+  CMAKE_CMD+=(
+    "-DCMAKE_C_FLAGS=$GCC_DRIVER_FLAG"
+    "-DCMAKE_CXX_FLAGS=$GCC_DRIVER_FLAG"
+  )
+fi
 
 if [[ "${ACPP_EXPERIMENTAL_LLVM:-0}" == "1" ]]; then
   CMAKE_CMD+=(-DACPP_EXPERIMENTAL_LLVM=ON)
@@ -178,6 +198,7 @@ adaptivecpp_ref=${REF:-un-pinned}
 adaptivecpp_commit=${COMMIT:-unknown}
 cuda_path=${CUDA_PATH:-}
 rocm_path=${ROCM_PATH:-}
+gcc_install_dir=${ACPP_GCC_INSTALL_DIR:-}
 INFO
 
 echo

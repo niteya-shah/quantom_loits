@@ -39,16 +39,12 @@ modules_polaris() {
 }
 
 modules_odyssey() {
-    # Example based on currently visible Odyssey modules; adjust the ROCm choice
-    # to match the PyTorch environment used for the benchmark.
-    # module purge
-    # module load gcc/13.2
-    # module load cmake/3.31.1
-    # module load boost/1.75
-    # module load hwloc/2.4.0
-    # module load rocm/<chosen-version>
-    # export ROCM_PATH=/path/to/rocm   # only if the module does not export it
-    :
++       module load gcc/13.2
++       module load cmake/3.31.1
++       module load boost/1.75
++       module load hwloc/2.4.0
++       module load rocm/7.2.4
+   :
 }
 
 modules_aurora() {
@@ -223,6 +219,47 @@ export DPCPP_SOURCE_DIR="${DPCPP_SOURCE_DIR:-$(default_source_or_legacy \
     "$TOOLCHAIN_SOURCE_ROOT/intel-llvm-$(sanitize_ref "$DPCPP_REF")" \
     "$TOOLCHAIN_WORK_ROOT/$SITE/dpcpp/source" \
     'buildbot/configure.py')}"
+
+
+configure_host_gcc() {
+    local host_cc host_cxx gcc_crt gcc_libstdcpp gcc_libdir
+
+    host_cc="${LLVM_C_COMPILER:-$(command -v gcc || true)}"
+    host_cxx="${LLVM_CXX_COMPILER:-$(command -v g++ || true)}"
+
+    [[ -n "$host_cc" && -x "$host_cc" ]] || {
+        echo "ERROR: gcc not found after loading the site modules." >&2
+        exit 127
+    }
+    [[ -n "$host_cxx" && -x "$host_cxx" ]] || {
+        echo "ERROR: g++ not found after loading the site modules." >&2
+        exit 127
+    }
+
+    gcc_crt="$("$host_cxx" -print-file-name=crtbegin.o)"
+    gcc_libstdcpp="$("$host_cxx" -print-file-name=libstdc++.so.6)"
+
+    [[ "$gcc_crt" = /* && -f "$gcc_crt" ]] || {
+        echo "ERROR: could not resolve crtbegin.o from $host_cxx" >&2
+        exit 2
+    }
+    [[ "$gcc_libstdcpp" = /* && -f "$gcc_libstdcpp" ]] || {
+        echo "ERROR: could not resolve libstdc++.so.6 from $host_cxx" >&2
+        exit 2
+    }
+
+    export LLVM_C_COMPILER="${LLVM_C_COMPILER:-$host_cc}"
+    export LLVM_CXX_COMPILER="${LLVM_CXX_COMPILER:-$host_cxx}"
+    export DPCPP_HOST_CC="${DPCPP_HOST_CC:-$host_cc}"
+    export DPCPP_HOST_CXX="${DPCPP_HOST_CXX:-$host_cxx}"
+    export ACPP_GCC_INSTALL_DIR="${ACPP_GCC_INSTALL_DIR:-$(dirname "$gcc_crt")}"
+
+    gcc_libdir="$(dirname "$gcc_libstdcpp")"
+    case ":${LD_LIBRARY_PATH:-}:" in
+        *":$gcc_libdir:"*) ;;
+        *) export LD_LIBRARY_PATH="$gcc_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+    esac
+}
 
 resolve_vendor_paths() {
     if [[ "$GPU_BACKEND" == "cuda" ]]; then
