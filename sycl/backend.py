@@ -286,7 +286,7 @@ class SYCLLOITS(nn.Module):
 
     def forward(self, theory_outputs, n_events):
         x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance = theory_outputs[:6]
-        if xsec_x.device != self.device:
+        if xsec_x.device.type != self.device.type:
             raise ValueError(f"SYCL backend configured for {self.device}, got tensors on {xsec_x.device}")
         sequence = self.sequence
         self.sequence += 1
