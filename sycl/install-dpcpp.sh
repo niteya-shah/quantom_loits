@@ -27,11 +27,12 @@ Environment overrides:
   DPCPP_REF             git ref if the third positional argument is omitted
   DPCPP_WORKDIR         build/work root
   DPCPP_SOURCE_DIR      intel/llvm checkout prepared by fetch-dpcpp.sh (required)
-  DPCPP_JOBS            parallel build jobs (default: 4)
+  DPCPP_JOBS            parallel build jobs (default: all available cores)
   DPCPP_BUILD_TYPE      Debug or Release (default: Release)
   DPCPP_HOST_CC         host C compiler (default: gcc from PATH)
   DPCPP_HOST_CXX        host C++ compiler (default: g++ from PATH)
   DPCPP_CONFIGURE_ARGS  extra whitespace-separated configure.py arguments
+  DPCPP_CUPTI_LIBRARY   explicit CUPTI shared library override for CUDA builds
   CUDA_PATH             CUDA toolkit root for a non-default CUDA installation
   ROCM_PATH             ROCm root for a non-default ROCm installation
 USAGE
@@ -50,7 +51,7 @@ fi
 BUILD="$1"
 TARGET_SPEC="$2"
 REF="${3:-${DPCPP_REF:-}}"
-JOBS="${DPCPP_JOBS:-4}"
+JOBS="${DPCPP_JOBS:-$(nproc)}"
 BUILD_TYPE="${DPCPP_BUILD_TYPE:-Release}"
 WORK_ROOT="${DPCPP_WORKDIR:-${TMPDIR:-/tmp}/quantom-dpcpp-${USER:-user}}"
 SOURCE="${DPCPP_SOURCE_DIR:-}"
@@ -152,6 +153,65 @@ printf 'Configuring DPC++:'
 printf ' %q' "${CONFIGURE_CMD[@]}"
 printf '\n'
 CC="$CC_BIN" CXX="$CXX_BIN" "${CONFIGURE_CMD[@]}"
+
+repair_cuda_cupti() {
+  local cache="$BUILD/CMakeCache.txt"
+  local cached=""
+  local cupti="${DPCPP_CUPTI_LIBRARY:-}"
+  local cupti_static=""
+
+  [[ -f "$cache" ]] || {
+    echo "DPC++ configure did not create $cache" >&2
+    exit 1
+  }
+
+  cached="$(sed -n 's/^CUDA_cupti_LIBRARY:FILEPATH=//p' "$cache" | head -n 1)"
+  if [[ -z "$cupti" && -n "$cached" && -f "$cached" ]]; then
+    return
+  fi
+
+  if [[ -z "$cupti" ]]; then
+    for candidate in \
+      "$CUDA_PATH/extras/CUPTI/lib64/libcupti.so" \
+      "$CUDA_PATH/targets/x86_64-linux/lib/libcupti.so" \
+      "$CUDA_PATH/lib64/libcupti.so"; do
+      if [[ -f "$candidate" ]]; then
+        cupti="$candidate"
+        break
+      fi
+    done
+  fi
+
+  [[ -n "$cupti" && -f "$cupti" ]] || {
+    echo "DPC++ configured an invalid CUPTI library path: ${cached:-<unset>}" >&2
+    echo "Set DPCPP_CUPTI_LIBRARY to the full path to libcupti.so." >&2
+    exit 2
+  }
+
+  cupti_static="$(dirname "$cupti")/libcupti_static.a"
+  CMAKE_REPAIR=(
+    cmake
+    -S "$SOURCE/llvm"
+    -B "$BUILD"
+    "-DCUDA_cupti_LIBRARY:FILEPATH=$cupti"
+  )
+  if [[ -f "$cupti_static" ]]; then
+    CMAKE_REPAIR+=("-DCUDA_cupti_static_LIBRARY:FILEPATH=$cupti_static")
+  fi
+
+  echo "Repairing DPC++ CUPTI path: $cupti"
+  CC="$CC_BIN" CXX="$CXX_BIN" "${CMAKE_REPAIR[@]}"
+
+  cached="$(sed -n 's/^CUDA_cupti_LIBRARY:FILEPATH=//p' "$cache" | head -n 1)"
+  [[ -n "$cached" && -f "$cached" ]] || {
+    echo "DPC++ CUPTI path remains invalid after CMake repair: ${cached:-<unset>}" >&2
+    exit 2
+  }
+}
+
+if (( WANT_CUDA )) && [[ -n "${CUDA_PATH:-}" ]]; then
+  repair_cuda_cupti
+fi
 
 COMPILE_CMD=(
   python "$SOURCE/buildbot/compile.py"

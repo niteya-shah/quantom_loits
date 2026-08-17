@@ -80,6 +80,7 @@ fi
 # reported as available. Other variants are untouched.
 rm -f \
   "$BUILD/libquantom_loits_sycl.so" \
+  "$BUILD/variant.py" \
   "$BUILD/toolchain.txt" \
   "$BUILD/torch_device.txt" \
   "$BUILD/target.txt" \
@@ -104,14 +105,19 @@ fi
 rm -f "$BUILD"/quantom_loits_sycl_binding*.so "$BUILD"/bindings.o "$BUILD"/build.ninja "$BUILD"/lock
 (cd "$ROOT" && QUANTOM_SYCL_VARIANT="$VARIANT" python -m sycl.build)
 
-printf '%s\n' "acpp" > "$BUILD/toolchain.txt"
-printf '%s\n' "$MODE" > "$BUILD/target.txt"
-printf '%s\n' "$TORCH_DEVICE" > "$BUILD/torch_device.txt"
-if [[ -n "$ARCH" ]]; then
-  printf '%s\n' "$ARCH" > "$BUILD/architecture.txt"
-else
-  rm -f "$BUILD/architecture.txt"
-fi
+python - "$BUILD/variant.py" "acpp" "$MODE" "$TORCH_DEVICE" "$ARCH" <<'PY'
+from pathlib import Path
+import sys
+
+path, toolchain, target, torch_device, architecture = sys.argv[1:]
+metadata = {
+    "toolchain": toolchain,
+    "target": target,
+    "torch_device": torch_device,
+    "architecture": architecture or None,
+}
+Path(path).write_text("METADATA = " + repr(metadata) + "\n")
+PY
 
 echo "built SYCL variant '$VARIANT' in $BUILD"
 echo "use it with: export QUANTOM_SYCL_VARIANT='$VARIANT'"

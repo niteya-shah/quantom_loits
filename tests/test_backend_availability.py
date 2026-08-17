@@ -10,9 +10,13 @@ def make_fake_sycl_build(root, variant, device="cpu", toolchain="acpp", target="
     build = root / "build" / variant
     build.mkdir(parents=True)
     (build / "libquantom_loits_sycl.so").touch()
-    (build / "toolchain.txt").write_text(f"{toolchain}\n")
-    (build / "torch_device.txt").write_text(f"{device}\n")
-    (build / "target.txt").write_text(f"{target}\n")
+    metadata = {
+        "toolchain": toolchain,
+        "target": target,
+        "torch_device": device,
+        "architecture": None,
+    }
+    (build / "variant.py").write_text(f"METADATA = {metadata!r}\n")
     return build
 
 

@@ -274,5 +274,7 @@ for the SYCL queue before returning to PyTorch. This prioritizes correctness
 and zero-copy tensor storage over asynchronous stream overlap and avoids the
 host/NumPy staging used by the retired implementation.
 
-The selected SYCL device must correspond to the PyTorch tensor device. See
-`sycl/README.md` for runtime selector and build details.
+The selected SYCL device must correspond to the PyTorch tensor device. Each
+explicit SYCL build stores its build provenance in `sycl/build/<variant>/variant.py`.
+See `sycl/README.md` for runtime selector, shared-filesystem, and toolchain build
+details.

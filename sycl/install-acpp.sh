@@ -18,7 +18,7 @@ Environment overrides:
   ACPP_REF          git ref if the third positional argument is omitted
   ACPP_WORKDIR      build root; preserved across restarts
   ACPP_SOURCE_DIR   AdaptiveCpp checkout prepared by fetch-acpp.sh (required)
-  ACPP_JOBS         parallel build jobs (default: 4)
+  ACPP_JOBS         parallel build jobs (default: all available cores)
   ACPP_BUILD_TYPE   CMake build type (default: Release)
   ACPP_CMAKE_ARGS   additional whitespace-separated CMake arguments
   ACPP_GCC_INSTALL_DIR
@@ -43,7 +43,7 @@ fi
 PREFIX="$1"
 LLVM_PREFIX="$2"
 REF="${3:-${ACPP_REF:-}}"
-JOBS="${ACPP_JOBS:-4}"
+JOBS="${ACPP_JOBS:-$(nproc)}"
 BUILD_TYPE="${ACPP_BUILD_TYPE:-Release}"
 WORK_ROOT="${ACPP_WORKDIR:-${TMPDIR:-/tmp}/quantom-adaptivecpp-${USER:-user}}"
 SOURCE="${ACPP_SOURCE_DIR:-}"

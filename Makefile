@@ -14,18 +14,19 @@ SYCL_ARCH ?=
 LLVM_PREFIX ?=
 LLVM_TARGETS ?=
 LLVM_VERSION ?=
-LLVM_JOBS ?= 4
+JOBS ?= $(shell nproc)
+LLVM_JOBS ?= $(JOBS)
 ACPP_PREFIX ?=
 ACPP_REF ?=
-ACPP_JOBS ?= 4
+ACPP_JOBS ?= $(JOBS)
 DPCPP_PREFIX ?=
 DPCPP_TARGETS ?=
 DPCPP_REF ?=
-DPCPP_JOBS ?= 4
+DPCPP_JOBS ?= $(JOBS)
 
 .PHONY: all \
         build build-all build-cpp build-openmp \
-        install-llvm install-acpp install-dpcpp build-sycl-acpp build-sycl-dpcpp list-sycl-builds \
+        install-llvm install-acpp install-dpcpp build-sycl-acpp build-sycl-dpcpp rebuild-sycl-binding list-sycl-builds \
         test test-pytorch test-cpp test-openmp test-sycl test-rng \
         benchmark profile list-backends compile-check \
         plots plot-cpu plot-gpu plot-ss plot-ws \
@@ -94,6 +95,14 @@ build-sycl-dpcpp:
 		test -z "$(SYCL_ARCH)" || { echo "SYCL_ARCH is only valid for cuda/hip targets" >&2; exit 2; }; \
 		./sycl/build-dpcpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)"; \
 	fi
+
+rebuild-sycl-binding:
+	@variant="$${QUANTOM_SYCL_VARIANT:-}"; \
+	test -n "$$variant" || { echo "QUANTOM_SYCL_VARIANT must be set explicitly" >&2; exit 2; }; \
+	build="sycl/build/$$variant"; \
+	test -f "$$build/libquantom_loits_sycl.so" || { echo "missing SYCL core library: $$build/libquantom_loits_sycl.so" >&2; exit 2; }; \
+	rm -f "$$build"/quantom_loits_sycl_binding*.so "$$build"/bindings.o "$$build"/build.ninja "$$build"/lock; \
+	$(PYTHON) -m sycl.build
 
 list-sycl-builds:
 	@$(PYTHON) -c 'from sycl.backend import built_variants; print("\\n".join(built_variants()) or "(none)")'

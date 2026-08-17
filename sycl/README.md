@@ -26,10 +26,11 @@ build never overwrites another.
 
 For example, a shared cluster checkout can contain:
 
-    sycl/build/acpp-a100/
-    sycl/build/acpp-mi250/
-    sycl/build/dpcpp-xpu/
-    sycl/build/dpcpp-a100/
+    sycl/build/acpp-polaris-a100/
+    sycl/build/acpp-illyad-h100/
+    sycl/build/acpp-odyssey-mi300a/
+    sycl/build/dpcpp-illyad-h100/
+    sycl/build/dpcpp-odyssey-mi300a/
 
 All variants compile the same `loits_core.cpp`.
 
@@ -41,9 +42,28 @@ There is deliberately no fallback to the only build present, no hardware-based
 automatic selection, and no default toolchain. This allows multiple SYCL
 implementations to coexist and makes benchmark provenance explicit.
 
+Each complete variant contains the native library plus one generated metadata file:
+
+    libquantom_loits_sycl.so
+    variant.py
+
+`variant.py` contains a single `METADATA` dictionary recording the toolchain,
+target, Torch device type, and architecture that were actually built.
+
 List complete builds with:
 
     make list-sycl-builds
+
+The cluster helper keeps compiler installs and work trees site-specific under
+`$TOOLCHAIN_ROOT/<site>` and `$TOOLCHAIN_WORK_ROOT/<site>`. For example:
+
+    ./sycl/setup-cluster-sycl.sh illyad fetch acpp
+    ./sycl/setup-cluster-sycl.sh illyad build acpp
+    ./sycl/setup-cluster-sycl.sh illyad fetch dpcpp
+    ./sycl/setup-cluster-sycl.sh illyad build dpcpp
+
+Illyad targets its NVIDIA H100 with `sm_90`. Odyssey remains isolated under its
+own site directories even when both machines share the same filesystem.
 
 ## Install the SYCL toolchains
 
@@ -82,7 +102,8 @@ does **not** build the old `clang-tools-extra`, libc++, libc++abi, libunwind, or
 OpenMP offload runtime stack because AdaptiveCpp's current instructions do not
 require those for this LLVM dependency.
 
-Useful overrides:
+Builds use all CPUs reported by `nproc` by default. Override the job count only
+when needed. Useful overrides:
 
     LLVM_WORKDIR=/scratch/me/llvm-build
     LLVM_SOURCE_DIR=/path/to/existing/llvm-project
@@ -172,9 +193,11 @@ For non-standard vendor stacks:
     ROCM_PATH=/path/to/rocm
 
 The installer passes `CUDAToolkit_ROOT` for CUDA and `UR_HIP_ROCM_DIR` for HIP,
-matching the current DPC++ guide. Native CPU no longer requires a separate TBB
-installation. Level Zero remains an external runtime requirement on Intel GPU
-nodes.
+matching the current DPC++ guide. For CUDA builds it also validates CMake's CUPTI
+library selection and repairs a bad generated path from the toolkit's real CUPTI
+location before compilation starts. `DPCPP_CUPTI_LIBRARY` can override that path.
+Native CPU no longer requires a separate TBB installation. Level Zero remains an
+external runtime requirement on Intel GPU nodes.
 
 Intel's source-build guide currently uses the build tree directly as the
 toolchain (`bin/` and `lib/`) and marks deployment instructions as incomplete.
@@ -224,8 +247,14 @@ Installed toolchain roots can be selected with `ACPP_PREFIX` and
 
 For ROCm PyTorch, the Torch device string is still `cuda`.
 
-A failed rebuild removes the selected variant's completeness markers before
-compilation, but does not modify any other variant directory.
+A failed rebuild removes the selected variant's `variant.py` completeness metadata
+before compilation, but does not modify any other variant directory.
+
+If only the active Python/PyTorch ABI changes, rebuild just the host binding and
+leave the native SYCL core untouched:
+
+    export QUANTOM_SYCL_VARIANT=acpp-illyad-h100
+    make rebuild-sycl-binding
 
 ## Runtime selection
 

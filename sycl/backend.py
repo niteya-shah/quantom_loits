@@ -1,3 +1,4 @@
+import ast
 import ctypes
 import os
 import re
@@ -57,14 +58,12 @@ def core_library_path(variant=None):
     return variant_build_dir(variant) / "libquantom_loits_sycl.so"
 
 
+def _metadata_path(variant=None):
+    return variant_build_dir(variant) / "variant.py"
+
+
 def _complete_build(variant):
-    build = variant_build_dir(variant)
-    return (
-        core_library_path(variant).is_file()
-        and (build / "toolchain.txt").is_file()
-        and (build / "torch_device.txt").is_file()
-        and (build / "target.txt").is_file()
-    )
+    return core_library_path(variant).is_file() and _metadata_path(variant).is_file()
 
 
 def built_variants():
@@ -92,31 +91,60 @@ def is_built(variant=None):
         return False
 
 
-def _read_marker(name, variant=None):
+def _read_metadata(variant=None):
     build = variant_build_dir(variant)
-    marker = build / name
-    if not marker.is_file():
+    path = _metadata_path(variant)
+    if not path.is_file():
         raise RuntimeError(
-            f"selected SYCL variant {build.name!r} is incomplete: missing {name}"
+            f"selected SYCL variant {build.name!r} is incomplete: missing variant.py"
         )
-    value = marker.read_text().strip()
-    if not value:
+    try:
+        module = ast.parse(path.read_text(), filename=str(path))
+        if (
+            len(module.body) != 1
+            or not isinstance(module.body[0], ast.Assign)
+            or len(module.body[0].targets) != 1
+            or not isinstance(module.body[0].targets[0], ast.Name)
+            or module.body[0].targets[0].id != "METADATA"
+        ):
+            raise ValueError("expected a single METADATA assignment")
+        metadata = ast.literal_eval(module.body[0].value)
+    except (OSError, SyntaxError, ValueError) as exc:
         raise RuntimeError(
-            f"selected SYCL variant {build.name!r} is incomplete: empty {name}"
+            f"selected SYCL variant {build.name!r} has invalid variant.py: {exc}"
+        ) from exc
+
+    if not isinstance(metadata, dict):
+        raise RuntimeError(
+            f"selected SYCL variant {build.name!r} has invalid variant.py: METADATA must be a dict"
         )
-    return value
+    for key in ("toolchain", "target", "torch_device", "architecture"):
+        if key not in metadata:
+            raise RuntimeError(
+                f"selected SYCL variant {build.name!r} has invalid variant.py: missing {key!r}"
+            )
+    for key in ("toolchain", "target", "torch_device"):
+        if not isinstance(metadata[key], str) or not metadata[key]:
+            raise RuntimeError(
+                f"selected SYCL variant {build.name!r} has invalid variant.py: {key!r} must be a non-empty string"
+            )
+    if metadata["architecture"] is not None and not isinstance(metadata["architecture"], str):
+        raise RuntimeError(
+            f"selected SYCL variant {build.name!r} has invalid variant.py: 'architecture' must be a string or None"
+        )
+    return metadata
 
 
 def configured_toolchain():
-    return _read_marker("toolchain.txt")
+    return _read_metadata()["toolchain"]
 
 
 def configured_target():
-    return _read_marker("target.txt")
+    return _read_metadata()["target"]
 
 
 def configured_torch_device_mode():
-    return _read_marker("torch_device.txt")
+    return _read_metadata()["torch_device"]
 
 
 def configured_torch_device():

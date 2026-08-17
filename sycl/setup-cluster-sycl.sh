@@ -97,7 +97,7 @@ Environment:
                         default: $TOOLCHAIN_ROOT/sources
   TOOLCHAIN_WORK_ROOT   persistent build workspace
                         default: $TOOLCHAIN_ROOT/work
-  JOBS                  parallel build jobs; default: 8
+  JOBS                  parallel build jobs; default: all available cores
   LLVM_VERSION          LLVM for AdaptiveCpp; default: 20.1.8
   ACPP_REF              AdaptiveCpp ref; default: v25.10.0
   DPCPP_REF             intel/llvm ref; default: sycl
@@ -185,7 +185,7 @@ cd "$ROOT"
 TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-$HOME/.local/quantom-toolchains}"
 TOOLCHAIN_SOURCE_ROOT="${TOOLCHAIN_SOURCE_ROOT:-$TOOLCHAIN_ROOT/sources}"
 TOOLCHAIN_WORK_ROOT="${TOOLCHAIN_WORK_ROOT:-$TOOLCHAIN_ROOT/work}"
-JOBS="${JOBS:-8}"
+JOBS="${JOBS:-$(nproc)}"
 LLVM_VERSION="${LLVM_VERSION:-20.1.8}"
 ACPP_REF="${ACPP_REF:-v25.10.0}"
 DPCPP_REF="${DPCPP_REF:-sycl}"
@@ -290,7 +290,7 @@ resolve_vendor_paths() {
             elif [[ -n "${CUDA_ROOT:-}" ]]; then
                 export CUDA_PATH="$CUDA_ROOT"
             elif command -v nvcc >/dev/null 2>&1; then
-                export CUDA_PATH="$(cd "$(dirname "$(command -v nvcc)")/.." && pwd)"
+                export CUDA_PATH="$(cd "$(dirname "$(readlink -f "$(command -v nvcc)")")/.." && pwd)"
             fi
         fi
         [[ -n "${CUDA_PATH:-}" && -d "$CUDA_PATH" ]] || {
@@ -302,7 +302,7 @@ resolve_vendor_paths() {
             if [[ -n "${ROCM_HOME:-}" ]]; then
                 export ROCM_PATH="$ROCM_HOME"
             elif command -v hipcc >/dev/null 2>&1; then
-                export ROCM_PATH="$(cd "$(dirname "$(command -v hipcc)")/.." && pwd)"
+                export ROCM_PATH="$(cd "$(dirname "$(readlink -f "$(command -v hipcc)")")/.." && pwd)"
             fi
         fi
         [[ -n "${ROCM_PATH:-}" && -d "$ROCM_PATH" ]] || {

@@ -20,7 +20,7 @@ Environment overrides:
   LLVM_WORKDIR          persistent build root; use cluster scratch if desired
   LLVM_SOURCE_DIR       llvm-project checkout prepared by fetch-llvm.sh (required)
   LLVM_REF              source ref recorded in metadata (default llvmorg-<version>)
-  LLVM_JOBS             parallel build jobs (default: 4)
+  LLVM_JOBS             parallel build jobs (default: all available cores)
   LLVM_LINK_JOBS        optional LLVM_PARALLEL_LINK_JOBS value
   LLVM_BUILD_TYPE       CMake build type (default: Release)
   LLVM_C_COMPILER       host C compiler (default: gcc from PATH)
@@ -44,7 +44,7 @@ PREFIX="$1"
 TARGET_SPEC="$2"
 VERSION="$3"
 REF="${LLVM_REF:-llvmorg-${VERSION}}"
-JOBS="${LLVM_JOBS:-4}"
+JOBS="${LLVM_JOBS:-$(nproc)}"
 BUILD_TYPE="${LLVM_BUILD_TYPE:-Release}"
 WORK_ROOT="${LLVM_WORKDIR:-${TMPDIR:-/tmp}/quantom-llvm-${VERSION}-${USER:-user}}"
 SOURCE="${LLVM_SOURCE_DIR:-}"
