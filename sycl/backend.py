@@ -15,6 +15,7 @@ _CORE_HANDLE = None
 _LOADED_VARIANT = None
 _VARIANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
 _DPCPP_HIP_BRIDGE_STREAMS = {}
+_HIP_RUNTIME = None
 
 
 def _root():
@@ -211,8 +212,47 @@ def load_extension(verbose=False, allow_incomplete=False):
         ],
         verbose=verbose,
     )
+    if not allow_incomplete:
+        _guard_dpcpp_hip_calls(_EXTENSION)
     _LOADED_VARIANT = variant
     return _EXTENSION
+
+
+def _clear_dpcpp_hip_last_error():
+    global _HIP_RUNTIME
+
+    if _HIP_RUNTIME is None:
+        _HIP_RUNTIME = ctypes.CDLL("libamdhip64.so")
+        _HIP_RUNTIME.hipGetLastError.argtypes = []
+        _HIP_RUNTIME.hipGetLastError.restype = ctypes.c_int
+        _HIP_RUNTIME.hipGetErrorString.argtypes = [ctypes.c_int]
+        _HIP_RUNTIME.hipGetErrorString.restype = ctypes.c_char_p
+
+    error = int(_HIP_RUNTIME.hipGetLastError())
+    if error in (0, 500):
+        return
+
+    message = _HIP_RUNTIME.hipGetErrorString(error)
+    if message:
+        message = message.decode(errors="replace")
+    else:
+        message = "unknown HIP error"
+    raise RuntimeError(f"DPC++ HIP left error {error}: {message}")
+
+
+def _guard_dpcpp_hip_calls(extension):
+    if configured_toolchain() != "dpcpp" or configured_target() != "hip":
+        return
+
+    for name in ("forward", "backward"):
+        native = getattr(extension, name)
+
+        def guarded(*args, _native=native, **kwargs):
+            result = _native(*args, **kwargs)
+            _clear_dpcpp_hip_last_error()
+            return result
+
+        setattr(extension, name, guarded)
 
 
 def _dpcpp_hip_bridge_stream(device_index):

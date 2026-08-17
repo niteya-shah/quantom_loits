@@ -183,7 +183,7 @@ def test_sycl_torch_kernel_after_native_call():
     sync(device)
     torch.testing.assert_close(
         probe,
-        torch.linspace(0.0, 1.0, 32, dtype=torch.float64),
+        torch.linspace(0.0, 1.0, 32, dtype=torch.float64, device=device),
         rtol=0.0,
         atol=0.0,
     )
