@@ -5,6 +5,7 @@
 #include <sycl/sycl.hpp>
 #if defined(QUANTOM_DPCPP_HIP)
 #include <sycl/backend.hpp>
+#include <hip/hip_runtime_api.h>
 #endif
 
 #include <cstddef>
@@ -146,8 +147,21 @@ void bind_torch_stream(uintptr_t native_stream, int device_index) {
 #endif
 }
 
+void clear_expected_hip_error() {
+#if defined(QUANTOM_DPCPP_HIP)
+  const auto error = hipGetLastError();
+  if (error == hipSuccess || error == hipErrorNotFound) return;
+
+  const char* message = hipGetErrorString(error);
+  throw std::runtime_error(
+      "DPC++ HIP left error " + std::to_string(static_cast<int>(error)) +
+      ": " + (message ? message : "unknown HIP error"));
+#endif
+}
+
 void synchronize() {
   get_queue().wait_and_throw();
+  clear_expected_hip_error();
 }
 
 Allocation allocate_counts(const double* QUANTOM_RESTRICT weights,

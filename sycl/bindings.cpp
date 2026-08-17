@@ -23,7 +23,11 @@ class RegionGuard {
 };
 
 inline void maybe_sync(bool profile_regions) {
-  if (profile_regions) sycl_loits::synchronize();
+  if (profile_regions) {
+    sycl_loits::synchronize();
+  } else {
+    sycl_loits::clear_expected_hip_error();
+  }
 }
 
 inline void check_fp64_contiguous(const at::Tensor& tensor,

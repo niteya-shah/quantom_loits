@@ -72,7 +72,7 @@ case "$MODE" in
     [[ -n "$ARCH" ]] || { echo "HIP architecture is required, e.g. gfx90a" >&2; usage; exit 2; }
     CXX="$(resolve_cxx "${DPCPP_HIP_CXX:-}" clang++)"
     TARGET="amdgcn-amd-amdhsa"
-    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend "--offload-arch=$ARCH" -DQUANTOM_DPCPP_HIP=1)
+    TARGET_FLAGS=(-fsycl -fsycl-targets="$TARGET" -Xsycl-target-backend "--offload-arch=$ARCH" -DQUANTOM_DPCPP_HIP=1 -D__HIP_PLATFORM_AMD__=1)
     TORCH_DEVICE="cuda"
     ;;
   *)
@@ -89,6 +89,7 @@ if ! command -v "$CXX" >/dev/null 2>&1; then
 fi
 
 LIBSPIRV_FLAGS=()
+HIP_LINK_FLAGS=()
 if [[ "$MODE" == "hip" ]]; then
   if [[ -n "${DPCPP_LIBSPIRV_PATH:-}" ]]; then
     LIBSPIRV="$DPCPP_LIBSPIRV_PATH"
@@ -107,6 +108,18 @@ if [[ "$MODE" == "hip" ]]; then
 
   echo "DPC++ HIP libspirv: $LIBSPIRV"
   LIBSPIRV_FLAGS+=("-fsycl-libspirv-path=$LIBSPIRV")
+
+  ROCM_ROOT="${ROCM_PATH:-/opt/rocm}"
+  HIP_RUNTIME="$ROCM_ROOT/lib/libamdhip64.so"
+  if [[ ! -f "$HIP_RUNTIME" ]]; then
+    HIP_RUNTIME="$ROCM_ROOT/lib64/libamdhip64.so"
+  fi
+  if [[ ! -f "$HIP_RUNTIME" ]]; then
+    echo "ROCm HIP runtime not found under: $ROCM_ROOT" >&2
+    exit 2
+  fi
+  TARGET_FLAGS+=("-I$ROCM_ROOT/include")
+  HIP_LINK_FLAGS+=("$HIP_RUNTIME")
 fi
 
 rm -f \
@@ -129,6 +142,7 @@ fi
   "${EXTRA[@]}" \
   "${RPATH_FLAGS[@]}" \
   "$HERE/loits_core.cpp" \
+  "${HIP_LINK_FLAGS[@]}" \
   -Wl,-soname,libquantom_loits_sycl.so \
   -o "$BUILD/libquantom_loits_sycl.so"
 
