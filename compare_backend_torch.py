@@ -83,10 +83,12 @@ def load_native_extension(backend):
         raise RuntimeError(f"backend {backend!r} does not expose load_extension()") from exc
 
 
-def bind_native_runtime(module, extension, device):
-    bind = getattr(module, "bind_torch_stream", None)
-    if bind is not None:
-        bind(extension, device)
+def prepare_native_extension(module, extension, device):
+    prepare = getattr(module, "prepare_extension", None)
+    if prepare is not None:
+        return prepare(device)
+    sync(device)
+    return extension
 
 
 def report(name, reference, candidate, backend, preview=5):
@@ -139,8 +141,7 @@ def main():
     x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance = outputs[:6]
 
     backend_module, extension = load_native_extension(args.backend)
-    sync(device)
-    bind_native_runtime(backend_module, extension, device)
+    extension = prepare_native_extension(backend_module, extension, device)
     state = extension.forward(
         x_bins,
         xsec_x,
@@ -173,8 +174,7 @@ def main():
         retain_graph=True,
     )
 
-    sync(device)
-    bind_native_runtime(backend_module, extension, device)
+    extension = prepare_native_extension(backend_module, extension, device)
     grad_native_x, grad_native_q = extension.backward(
         upstream.contiguous(),
         x_bins,

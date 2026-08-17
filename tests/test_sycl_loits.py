@@ -9,7 +9,7 @@ from pytorch.gan import GANTrainer
 from pytorch.loits import TorchLOITSCore
 from pytorch.profiler import TrainingProfiler
 from pytorch.theory import TorchProxyTheoryLite
-from sycl.backend import bind_torch_stream, configured_torch_device, load_extension
+from sycl.backend import configured_torch_device, prepare_extension
 
 
 pytestmark = pytest.mark.skipif(
@@ -118,10 +118,8 @@ def sync(device):
 
 def native_state(outputs, *, seed=23, sequence=0, n_events=80):
     device = outputs[1].device
-    sync(device)
     x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance = outputs[:6]
-    extension = load_extension()
-    bind_torch_stream(extension, device)
+    extension = prepare_extension(device)
     state = extension.forward(
         x_bins,
         xsec_x,
@@ -171,22 +169,19 @@ def test_sycl_philox_streams_match_cpp_exactly():
 
 def test_sycl_torch_kernel_after_native_call():
     device = sycl_device()
-    if device.type != "cuda":
-        pytest.skip("native HIP/CUDA stream interoperability requires a GPU device")
+    if device.type == "cpu":
+        pytest.skip("requires an accelerator device")
+
+    torch.arange(32, dtype=torch.float64, device=device).square()
+    sync(device)
 
     outputs = manual_outputs(device)
     native_state(outputs, seed=29, sequence=3, n_events=80)
 
-    probe = torch.linspace(
-        0.0, 1.0, 32, dtype=torch.float64, device=device
-    )
+    probe = torch.arange(32, dtype=torch.float64, device=device).square()
     sync(device)
-    torch.testing.assert_close(
-        probe,
-        torch.linspace(0.0, 1.0, 32, dtype=torch.float64, device=device),
-        rtol=0.0,
-        atol=0.0,
-    )
+    expected = torch.arange(32, dtype=torch.float64).square()
+    torch.testing.assert_close(probe.cpu(), expected, rtol=0.0, atol=0.0)
 
 
 def test_sycl_forward_and_reverse_vjp_match_torch_for_same_samples():
@@ -207,9 +202,7 @@ def test_sycl_forward_and_reverse_vjp_match_torch_for_same_samples():
         (xsec_x, xsec_q2),
         retain_graph=True,
     )
-    sync(device)
-    extension = load_extension()
-    bind_torch_stream(extension, device)
+    extension = prepare_extension(device)
     grad_sycl_x, grad_sycl_q = extension.backward(
         upstream.contiguous(),
         x_bins,

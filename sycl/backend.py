@@ -257,7 +257,7 @@ def _dpcpp_hip_bridge_stream(device_index):
     return stream
 
 
-def bind_torch_stream(extension, device):
+def _bind_dpcpp_hip_stream(extension, device):
     """Bind DPC++/HIP execution to a PyTorch-owned native HIP stream."""
     if configured_toolchain() != "dpcpp" or configured_target() != "hip":
         return
@@ -287,11 +287,7 @@ def bind_torch_stream(extension, device):
         stream = _dpcpp_hip_bridge_stream(device_index)
         native_stream = int(stream.cuda_stream)
 
-    extension.bind_torch_stream(native_stream, int(device_index))
-
-
-def _region(enabled, name):
-    return record_function(name) if enabled else nullcontext()
+    extension.bind_torch_hip_stream(native_stream, int(device_index))
 
 
 def _sync_torch(device):
@@ -302,13 +298,24 @@ def _sync_torch(device):
         torch.xpu.synchronize(device)
 
 
+def prepare_extension(device, *, synchronize=True, verbose=False):
+    device = torch.device(device)
+    if synchronize:
+        _sync_torch(device)
+    extension = load_extension(verbose=verbose)
+    _bind_dpcpp_hip_stream(extension, device)
+    return extension
+
+
+def _region(enabled, name):
+    return record_function(name) if enabled else nullcontext()
+
+
 class _SYCLLOITSFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance, n_events, seed, sequence, profile_regions):
         profile_regions = bool(profile_regions)
-        _sync_torch(xsec_x.device)
-        extension = load_extension()
-        bind_torch_stream(extension, xsec_x.device)
+        extension = prepare_extension(xsec_x.device)
         with _region(profile_regions, "loits::binding::forward"):
             state = extension.forward(
                 x_bins,
@@ -332,9 +339,7 @@ class _SYCLLOITSFunction(torch.autograd.Function):
         with _region(ctx.profile_regions, "loits::autograd::backward"):
             x_bins, xsec_x, q2_bins, xsec_q2, acceptance, *saved = ctx.saved_tensors
             grad_events = grad_events.contiguous()
-            _sync_torch(grad_events.device)
-            extension = load_extension()
-            bind_torch_stream(extension, grad_events.device)
+            extension = prepare_extension(grad_events.device)
             with _region(ctx.profile_regions, "loits::binding::backward"):
                 grad_xsec_x, grad_xsec_q2 = extension.backward(
                     grad_events,
@@ -360,8 +365,7 @@ class SYCLLOITS(nn.Module):
         self.profile_regions = profile_regions
         self.seed = torch.initial_seed()
         self.sequence = 0
-        extension = load_extension()
-        bind_torch_stream(extension, self.device)
+        extension = prepare_extension(self.device, synchronize=False)
         if not extension.supports_fp64():
             raise RuntimeError(f"selected SYCL device does not support float64: {extension.device_name()}")
 

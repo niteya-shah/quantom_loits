@@ -22,12 +22,8 @@ class RegionGuard {
   std::unique_ptr<at::RecordFunction> guard_;
 };
 
-inline void maybe_sync(bool profile_regions) {
-  if (profile_regions) {
-    sycl_loits::synchronize();
-  } else {
-    sycl_loits::clear_expected_hip_error();
-  }
+inline void finish_region(bool profile_regions) {
+  sycl_loits::finish_submission(profile_regions);
 }
 
 inline void check_fp64_contiguous(const at::Tensor& tensor,
@@ -102,7 +98,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     RegionGuard region(profile_regions, "loits::forward::allocation");
     counts = at::empty({s.batch, s.cells}, weights.options().dtype(at::kLong));
     allocation = sycl_loits::allocate_counts(weights.data_ptr<double>(), counts.data_ptr<int64_t>(), n_events, s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor norm_x;
@@ -112,7 +108,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     norm_x = at::empty({s.batch, s.ny, s.nx}, xsec_x.options());
     rho_x = at::empty_like(xsec_x);
     sycl_loits::density_x(x_bins.data_ptr<double>(), xsec_x.data_ptr<double>(), norm_x.data_ptr<double>(), rho_x.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor norm_q;
@@ -122,7 +118,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     norm_q = at::empty({s.batch, s.nx, s.ny}, xsec_q.options());
     rho_q = at::empty_like(xsec_q);
     sycl_loits::density_q(q_bins.data_ptr<double>(), xsec_q.data_ptr<double>(), norm_q.data_ptr<double>(), rho_q.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor cdf_x;
@@ -130,7 +126,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     RegionGuard region(profile_regions, "loits::forward::cdf_x");
     cdf_x = at::empty_like(xsec_x);
     sycl_loits::cdf_x(x_bins.data_ptr<double>(), rho_x.data_ptr<double>(), acceptance.data_ptr<bool>(), cdf_x.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor cdf_q;
@@ -138,7 +134,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     RegionGuard region(profile_regions, "loits::forward::cdf_q2");
     cdf_q = at::empty_like(xsec_q);
     sycl_loits::cdf_q(q_bins.data_ptr<double>(), rho_q.data_ptr<double>(), acceptance.data_ptr<bool>(), cdf_q.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   const int64_t total_slots = s.batch * s.cells * allocation.nmax;
@@ -149,13 +145,13 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     RegionGuard region(profile_regions, "loits::forward::random_x");
     u_x = at::empty({s.batch, s.cells, allocation.nmax}, random_options);
     sycl_loits::fill_uniform(u_x.data_ptr<float>(), total_slots, seed, sequence * 2);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
   {
     RegionGuard region(profile_regions, "loits::forward::random_q2");
     u_q = at::empty({s.batch, s.cells, allocation.nmax}, random_options);
     sycl_loits::fill_uniform(u_q.data_ptr<float>(), total_slots, seed, sequence * 2 + 1);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor dense_x;
@@ -166,7 +162,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     interval_x = at::empty({total_slots}, xsec_x.options().dtype(at::kShort));
     sycl_loits::interpolate_x(x_bins.data_ptr<double>(), cdf_x.data_ptr<double>(), u_x.data_ptr<float>(), counts.data_ptr<int64_t>(),
                               allocation.nmax, dense_x.data_ptr<double>(), interval_x.data_ptr<int16_t>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor dense_q;
@@ -177,7 +173,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     interval_q = at::empty({total_slots}, xsec_q.options().dtype(at::kShort));
     sycl_loits::interpolate_q(q_bins.data_ptr<double>(), cdf_q.data_ptr<double>(), u_q.data_ptr<float>(), counts.data_ptr<int64_t>(),
                               allocation.nmax, dense_q.data_ptr<double>(), interval_q.data_ptr<int16_t>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor events;
@@ -191,7 +187,7 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
     const int64_t valid = sycl_loits::compact(dense_x.data_ptr<double>(), dense_q.data_ptr<double>(), counts.data_ptr<int64_t>(),
                                               allocation.nmax, events_storage.data_ptr<double>(), packed_storage.data_ptr<int64_t>(),
                                               row_offsets.data_ptr<int64_t>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
     events = events_storage.narrow(0, 0, valid);
     packed = packed_storage.narrow(0, 0, valid);
   }
@@ -241,7 +237,7 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
     sycl_loits::interpolation_vjp_x(grad_events.data_ptr<double>(), packed.data_ptr<int64_t>(), row_offsets.data_ptr<int64_t>(),
                                     x_bins.data_ptr<double>(), cdf_x.data_ptr<double>(), u_x.data_ptr<float>(),
                                     interval_x.data_ptr<int16_t>(), nmax, grad_cdf_x.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor grad_cdf_q;
@@ -251,7 +247,7 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
     sycl_loits::interpolation_vjp_q(grad_events.data_ptr<double>(), packed.data_ptr<int64_t>(), row_offsets.data_ptr<int64_t>(),
                                     q_bins.data_ptr<double>(), cdf_q.data_ptr<double>(), u_q.data_ptr<float>(),
                                     interval_q.data_ptr<int16_t>(), nmax, grad_cdf_q.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor grad_rho_x;
@@ -260,7 +256,7 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
     grad_rho_x = at::empty_like(xsec_x);
     sycl_loits::cdf_vjp_x(x_bins.data_ptr<double>(), acceptance.data_ptr<bool>(), grad_cdf_x.data_ptr<double>(),
                           grad_rho_x.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor grad_rho_q;
@@ -269,7 +265,7 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
     grad_rho_q = at::empty_like(xsec_q);
     sycl_loits::cdf_vjp_q(q_bins.data_ptr<double>(), acceptance.data_ptr<bool>(), grad_cdf_q.data_ptr<double>(),
                           grad_rho_q.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor grad_xsec_x;
@@ -278,7 +274,7 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
     grad_xsec_x = at::empty_like(xsec_x);
     sycl_loits::density_vjp_x(x_bins.data_ptr<double>(), xsec_x.data_ptr<double>(), norm_x.data_ptr<double>(),
                               grad_rho_x.data_ptr<double>(), grad_xsec_x.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   at::Tensor grad_xsec_q;
@@ -287,7 +283,7 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
     grad_xsec_q = at::empty_like(xsec_q);
     sycl_loits::density_vjp_q(q_bins.data_ptr<double>(), xsec_q.data_ptr<double>(), norm_q.data_ptr<double>(),
                               grad_rho_q.data_ptr<double>(), grad_xsec_q.data_ptr<double>(), s);
-    maybe_sync(profile_regions);
+    finish_region(profile_regions);
   }
 
   sycl_loits::synchronize();
@@ -304,6 +300,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("backward", &backward);
   m.def("device_name", []() { return std::string(sycl_loits::device_name()); });
   m.def("supports_fp64", &sycl_loits::supports_fp64);
-  m.def("bind_torch_stream", &sycl_loits::bind_torch_stream);
+  m.def("bind_torch_hip_stream", &sycl_loits::bind_torch_hip_stream);
   m.def("synchronize", &sycl_loits::synchronize);
 }

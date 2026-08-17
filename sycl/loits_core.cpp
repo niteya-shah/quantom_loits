@@ -116,7 +116,7 @@ bool supports_fp64() {
   return info_device().has(sycl::aspect::fp64);
 }
 
-void bind_torch_stream(uintptr_t native_stream, int device_index) {
+void bind_torch_hip_stream(uintptr_t native_stream, int device_index) {
 #if defined(QUANTOM_DPCPP_HIP)
   if (device_index < 0) {
     throw std::invalid_argument("PyTorch HIP device index must be non-negative");
@@ -147,7 +147,8 @@ void bind_torch_stream(uintptr_t native_stream, int device_index) {
 #endif
 }
 
-void clear_expected_hip_error() {
+void finish_submission(bool wait) {
+  if (wait) get_queue().wait_and_throw();
 #if defined(QUANTOM_DPCPP_HIP)
   const auto error = hipGetLastError();
   if (error == hipSuccess || error == hipErrorNotFound) return;
@@ -160,8 +161,7 @@ void clear_expected_hip_error() {
 }
 
 void synchronize() {
-  get_queue().wait_and_throw();
-  clear_expected_hip_error();
+  finish_submission(true);
 }
 
 Allocation allocate_counts(const double* QUANTOM_RESTRICT weights,
