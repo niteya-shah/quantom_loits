@@ -78,9 +78,15 @@ def sync(device):
 def load_native_extension(backend):
     module = importlib.import_module(f"{backend}.backend")
     try:
-        return module.load_extension()
+        return module, module.load_extension()
     except AttributeError as exc:
         raise RuntimeError(f"backend {backend!r} does not expose load_extension()") from exc
+
+
+def bind_native_runtime(module, extension, device):
+    bind = getattr(module, "bind_torch_stream", None)
+    if bind is not None:
+        bind(extension, device)
 
 
 def report(name, reference, candidate, backend, preview=5):
@@ -132,8 +138,9 @@ def main():
     outputs = theory(params)
     x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance = outputs[:6]
 
-    extension = load_native_extension(args.backend)
+    backend_module, extension = load_native_extension(args.backend)
     sync(device)
+    bind_native_runtime(backend_module, extension, device)
     state = extension.forward(
         x_bins,
         xsec_x,
@@ -167,6 +174,7 @@ def main():
     )
 
     sync(device)
+    bind_native_runtime(backend_module, extension, device)
     grad_native_x, grad_native_q = extension.backward(
         upstream.contiguous(),
         x_bins,
