@@ -440,7 +440,7 @@ install_dpcpp() {
 build_acpp_backend() {
     echo
     echo "=== Building QuantOm AdaptiveCpp backend: $ACPP_VARIANT ==="
-    ACPP_PREFIX="$ACPP_PREFIX" make build-sycl-acpp \
+    ACPP_PREFIX="$ACPP_PREFIX" LLVM_PREFIX="$LLVM_PREFIX" make build-sycl-acpp \
         SYCL_VARIANT="$ACPP_VARIANT" \
         SYCL_TARGET="$ACPP_TARGET" \
         SYCL_ARCH="$ACPP_ARCH"
