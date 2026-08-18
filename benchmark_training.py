@@ -20,7 +20,12 @@ def implementation_name(backend):
     return selected_variant()
 
 
-def native_threads(backend):
+def native_threads(backend, device):
+    if device != "cpu" or backend == "cpp":
+        return ""
+    explicit = os.environ.get("QUANTOM_CPU_THREADS", "")
+    if explicit:
+        return explicit
     if backend == "openmp":
         return os.environ.get("OMP_NUM_THREADS", "")
     return ""
@@ -42,7 +47,7 @@ def run(args, profile_regions=False):
     profiler = TrainingProfiler(args.device)
     suffix = "regions" if profile_regions else "training"
     implementation = implementation_name(args.backend)
-    threads = native_threads(args.backend)
+    threads = native_threads(args.backend, args.device)
     site = safe_component(args.site) if args.backend == "torch" and args.site else ""
     stem = "_".join(
         part
