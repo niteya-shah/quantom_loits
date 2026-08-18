@@ -1,12 +1,111 @@
+#if defined(QUANTOM_SYCL_NATIVE)
+
+#include <sycl/sycl.hpp>
+
+#include <cstdint>
+#if defined(QUANTOM_DPCPP_HIP)
+#include <hip/hip_runtime_api.h>
+#include <sycl/backend.hpp>
+
+#include <optional>
+#include <stdexcept>
+#include <string>
+#endif
+
+namespace sycl_loits {
+
+#if defined(QUANTOM_DPCPP_HIP)
+namespace {
+constexpr auto kHipBackend = sycl::backend::ext_oneapi_hip;
+using HipNativeQueue = sycl::backend_input_t<kHipBackend, sycl::queue>;
+
+sycl::device hip_device(int index) {
+  for (const auto& platform : sycl::platform::get_platforms()) {
+    if (platform.get_backend() != kHipBackend) continue;
+    auto devices = platform.get_devices(sycl::info::device_type::gpu);
+    if (index < static_cast<int>(devices.size())) return devices[index];
+    index -= static_cast<int>(devices.size());
+  }
+  throw std::runtime_error("DPC++ HIP device index is not visible to SYCL");
+}
+
+struct QueueState {
+  int device = -1;
+  uintptr_t stream = 0;
+  std::optional<sycl::context> context;
+  std::optional<sycl::queue> queue;
+};
+
+QueueState& queue_state() {
+  static thread_local QueueState state;
+  return state;
+}
+}  // namespace
+
+sycl::queue& queue() {
+  return *queue_state().queue;
+}
+#else
+sycl::queue& queue() {
+  static sycl::queue q{sycl::default_selector_v,
+                       sycl::property_list{sycl::property::queue::in_order{}}};
+  return q;
+}
+#endif
+
+void bind_torch_hip_stream(uintptr_t native_stream, int device_index) {
+#if defined(QUANTOM_DPCPP_HIP)
+  auto& state = queue_state();
+  if (!state.context || state.device != device_index) {
+    state.queue.reset();
+    state.context.emplace(hip_device(device_index));
+    state.device = device_index;
+    state.stream = 0;
+  }
+  if (!state.queue || state.stream != native_stream) {
+    state.queue.reset();
+    state.queue.emplace(sycl::make_queue<kHipBackend>(
+        reinterpret_cast<HipNativeQueue>(native_stream), *state.context));
+    state.stream = native_stream;
+  }
+#else
+  (void)native_stream;
+  (void)device_index;
+#endif
+}
+
+void finish_submission(bool wait) {
+  if (wait) queue().wait_and_throw();
+#if defined(QUANTOM_DPCPP_HIP)
+  const auto error = hipGetLastError();
+  if (error != hipSuccess && error != hipErrorNotFound) {
+    throw std::runtime_error(hipGetErrorString(error));
+  }
+#endif
+}
+
+void synchronize() {
+  finish_submission(true);
+}
+
+}  // namespace sycl_loits
+
+#else
+
 #include <torch/extension.h>
 #include <ATen/record_function.h>
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include "loits_core.hpp"
+
+namespace sycl_loits {
+void bind_torch_hip_stream(uintptr_t native_stream, int device_index);
+void finish_submission(bool wait);
+void synchronize();
+}  // namespace sycl_loits
 
 namespace {
 
@@ -26,54 +125,6 @@ inline void finish_region(bool profile_regions) {
   sycl_loits::finish_submission(profile_regions);
 }
 
-inline void check_fp64_contiguous(const at::Tensor& tensor,
-                                  const at::Device& device,
-                                  const char* name) {
-  TORCH_CHECK(tensor.device() == device, name, " must be on ", device);
-  TORCH_CHECK(tensor.scalar_type() == at::kDouble, name, " must be float64");
-  TORCH_CHECK(tensor.is_contiguous(), name, " must be contiguous");
-}
-
-sycl_loits::Shape validate_forward(const at::Tensor& x_bins,
-                                   const at::Tensor& xsec_x,
-                                   const at::Tensor& q_bins,
-                                   const at::Tensor& xsec_q,
-                                   const at::Tensor& weights,
-                                   const at::Tensor& acceptance,
-                                   int64_t n_events) {
-  const auto device = xsec_x.device();
-  TORCH_CHECK(device.is_cpu() || device.is_cuda() || device.type() == at::kXPU,
-              "SYCL backend supports torch CPU, CUDA/ROCm, or XPU tensors");
-  check_fp64_contiguous(x_bins, device, "x_bins");
-  check_fp64_contiguous(xsec_x, device, "xsec_x");
-  check_fp64_contiguous(q_bins, device, "q_bins");
-  check_fp64_contiguous(xsec_q, device, "xsec_q");
-  check_fp64_contiguous(weights, device, "weights");
-  TORCH_CHECK(acceptance.device() == device, "acceptance must be on ", device);
-  TORCH_CHECK(acceptance.scalar_type() == at::kBool, "acceptance must be bool");
-  TORCH_CHECK(acceptance.is_contiguous(), "acceptance must be contiguous");
-  TORCH_CHECK(n_events >= 0, "n_events must be non-negative");
-  TORCH_CHECK(sycl_loits::supports_fp64(), "selected SYCL device does not support float64: ", sycl_loits::device_name());
-
-  TORCH_CHECK(x_bins.dim() == 3, "x_bins must be [batch, nx, kx]");
-  TORCH_CHECK(xsec_x.dim() == 4, "xsec_x must be [batch, ny, nx, kx]");
-  TORCH_CHECK(q_bins.dim() == 3, "q_bins must be [batch, ny, kq]");
-  TORCH_CHECK(xsec_q.dim() == 4, "xsec_q must be [batch, nx, ny, kq]");
-  TORCH_CHECK(weights.dim() == 3, "weights must be [batch, nx, ny]");
-  TORCH_CHECK(acceptance.dim() == 3, "acceptance must be [batch, nx, ny]");
-
-  const sycl_loits::Shape s{
-      x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2), x_bins.size(1) * q_bins.size(1)};
-  TORCH_CHECK(s.kx >= 2 && s.kq >= 2, "CDF grids require at least two points");
-  TORCH_CHECK(s.kx <= INT16_MAX && s.kq <= INT16_MAX, "CDF grids exceed interval-index storage");
-  TORCH_CHECK(q_bins.size(0) == s.batch, "q_bins batch mismatch");
-  TORCH_CHECK(xsec_x.sizes() == at::IntArrayRef({s.batch, s.ny, s.nx, s.kx}), "xsec_x shape mismatch");
-  TORCH_CHECK(xsec_q.sizes() == at::IntArrayRef({s.batch, s.nx, s.ny, s.kq}), "xsec_q shape mismatch");
-  TORCH_CHECK(weights.sizes() == at::IntArrayRef({s.batch, s.nx, s.ny}), "weights shape mismatch");
-  TORCH_CHECK(acceptance.sizes() == weights.sizes(), "acceptance shape mismatch");
-  return s;
-}
-
 std::vector<at::Tensor> forward(at::Tensor x_bins,
                                 at::Tensor xsec_x,
                                 at::Tensor q_bins,
@@ -86,11 +137,8 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
                                 bool profile_regions) {
   RegionGuard total(profile_regions, "loits::forward");
 
-  sycl_loits::Shape s{};
-  {
-    RegionGuard region(profile_regions, "loits::forward::validation");
-    s = validate_forward(x_bins, xsec_x, q_bins, xsec_q, weights, acceptance, n_events);
-  }
+  const sycl_loits::Shape s{x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2),
+                           x_bins.size(1) * q_bins.size(1)};
 
   at::Tensor counts;
   sycl_loits::Allocation allocation{};
@@ -218,17 +266,9 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
                                  bool profile_regions) {
   RegionGuard total(profile_regions, "loits::backward");
 
-  sycl_loits::Shape s{};
-  int64_t nmax = 0;
-  {
-    RegionGuard region(profile_regions, "loits::backward::validation");
-    const auto device = xsec_x.device();
-    check_fp64_contiguous(grad_events, device, "grad_events");
-    TORCH_CHECK(grad_events.dim() == 2 && grad_events.size(1) == 2 && grad_events.size(0) == packed.size(0),
-                "grad_events shape mismatch");
-    s = {x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2), x_bins.size(1) * q_bins.size(1)};
-    nmax = u_x.size(2);
-  }
+  const sycl_loits::Shape s{x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2),
+                           x_bins.size(1) * q_bins.size(1)};
+  const int64_t nmax = u_x.size(2);
 
   at::Tensor grad_cdf_x;
   {
@@ -298,8 +338,8 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("forward", &forward);
   m.def("backward", &backward);
-  m.def("device_name", []() { return std::string(sycl_loits::device_name()); });
-  m.def("supports_fp64", &sycl_loits::supports_fp64);
   m.def("bind_torch_hip_stream", &sycl_loits::bind_torch_hip_stream);
   m.def("synchronize", &sycl_loits::synchronize);
 }
+
+#endif

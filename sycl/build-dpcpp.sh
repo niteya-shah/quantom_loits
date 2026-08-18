@@ -136,13 +136,13 @@ if [[ -n "$DPCPP_PREFIX" ]]; then
 fi
 
 "$CXX" \
-  -O3 -std=c++17 -DNDEBUG -fPIC -shared \
+  -O3 -std=c++17 -DNDEBUG -DQUANTOM_SYCL_NATIVE=1 -fPIC -shared \
   "${TARGET_FLAGS[@]}" \
   "${LIBSPIRV_FLAGS[@]}" \
   -I"$ROOT" \
   "${EXTRA[@]}" \
   "${RPATH_FLAGS[@]}" \
-  "$HERE/loits_core.cpp" \
+  "$HERE/loits_core.cpp" "$HERE/bindings.cpp" \
   "${HIP_LINK_FLAGS[@]}" \
   -Wl,-soname,libquantom_loits_sycl.so \
   -o "$BUILD/libquantom_loits_sycl.so"

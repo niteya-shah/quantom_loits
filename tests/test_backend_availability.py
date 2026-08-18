@@ -62,13 +62,6 @@ def test_selected_sycl_variant_uses_its_device_marker(monkeypatch, tmp_path):
     assert "expects torch device 'cpu'" in reason
 
 
-def test_invalid_sycl_variant_names_are_rejected(monkeypatch):
-    monkeypatch.setenv("QUANTOM_SYCL_VARIANT", "../outside")
-    ok, reason = backend_status("sycl", "cpu")
-    assert not ok
-    assert "invalid SYCL variant name" in reason
-
-
 def test_cpu_backend_device_constraints_are_reported():
     assert backend_status("cpp", "cpu")[0]
     assert backend_status("openmp", "cpu")[0]

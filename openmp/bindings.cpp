@@ -21,48 +21,6 @@ class RegionGuard {
   std::unique_ptr<at::RecordFunction> guard_;
 };
 
-inline void check_fp64_cpu_contiguous(const at::Tensor& tensor, const char* name) {
-  TORCH_CHECK(tensor.device().is_cpu(), name, " must be on CPU");
-  TORCH_CHECK(tensor.scalar_type() == at::kDouble, name, " must be float64");
-  TORCH_CHECK(tensor.is_contiguous(), name, " must be contiguous");
-}
-
-openmp_loits::Shape validate_forward(const at::Tensor& x_bins,
-                              const at::Tensor& xsec_x,
-                              const at::Tensor& q_bins,
-                              const at::Tensor& xsec_q,
-                              const at::Tensor& weights,
-                              const at::Tensor& acceptance,
-                              int64_t n_events) {
-  check_fp64_cpu_contiguous(x_bins, "x_bins");
-  check_fp64_cpu_contiguous(xsec_x, "xsec_x");
-  check_fp64_cpu_contiguous(q_bins, "q_bins");
-  check_fp64_cpu_contiguous(xsec_q, "xsec_q");
-  check_fp64_cpu_contiguous(weights, "weights");
-  TORCH_CHECK(acceptance.device().is_cpu(), "acceptance must be on CPU");
-  TORCH_CHECK(acceptance.scalar_type() == at::kBool, "acceptance must be bool");
-  TORCH_CHECK(acceptance.is_contiguous(), "acceptance must be contiguous");
-  TORCH_CHECK(n_events >= 0, "n_events must be non-negative");
-
-  TORCH_CHECK(x_bins.dim() == 3, "x_bins must be [batch, nx, kx]");
-  TORCH_CHECK(xsec_x.dim() == 4, "xsec_x must be [batch, ny, nx, kx]");
-  TORCH_CHECK(q_bins.dim() == 3, "q_bins must be [batch, ny, kq]");
-  TORCH_CHECK(xsec_q.dim() == 4, "xsec_q must be [batch, nx, ny, kq]");
-  TORCH_CHECK(weights.dim() == 3, "weights must be [batch, nx, ny]");
-  TORCH_CHECK(acceptance.dim() == 3, "acceptance must be [batch, nx, ny]");
-
-  const openmp_loits::Shape s{
-      x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2), x_bins.size(1) * q_bins.size(1)};
-  TORCH_CHECK(s.kx >= 2 && s.kq >= 2, "CDF grids require at least two points");
-  TORCH_CHECK(s.kx <= INT16_MAX && s.kq <= INT16_MAX, "CDF grids exceed interval-index storage");
-  TORCH_CHECK(q_bins.size(0) == s.batch, "q_bins batch mismatch");
-  TORCH_CHECK(xsec_x.sizes() == at::IntArrayRef({s.batch, s.ny, s.nx, s.kx}), "xsec_x shape mismatch");
-  TORCH_CHECK(xsec_q.sizes() == at::IntArrayRef({s.batch, s.nx, s.ny, s.kq}), "xsec_q shape mismatch");
-  TORCH_CHECK(weights.sizes() == at::IntArrayRef({s.batch, s.nx, s.ny}), "weights shape mismatch");
-  TORCH_CHECK(acceptance.sizes() == weights.sizes(), "acceptance shape mismatch");
-  return s;
-}
-
 std::vector<at::Tensor> forward(at::Tensor x_bins,
                                 at::Tensor xsec_x,
                                 at::Tensor q_bins,
@@ -75,11 +33,8 @@ std::vector<at::Tensor> forward(at::Tensor x_bins,
                                 bool profile_regions) {
   RegionGuard total(profile_regions, "loits::forward");
 
-  openmp_loits::Shape s{};
-  {
-    RegionGuard region(profile_regions, "loits::forward::validation");
-    s = validate_forward(x_bins, xsec_x, q_bins, xsec_q, weights, acceptance, n_events);
-  }
+  const openmp_loits::Shape s{x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2),
+                           x_bins.size(1) * q_bins.size(1)};
 
   at::Tensor counts;
   openmp_loits::Allocation allocation{};
@@ -196,16 +151,9 @@ std::vector<at::Tensor> backward(at::Tensor grad_events,
                                  bool profile_regions) {
   RegionGuard total(profile_regions, "loits::backward");
 
-  openmp_loits::Shape s{};
-  int64_t nmax = 0;
-  {
-    RegionGuard region(profile_regions, "loits::backward::validation");
-    check_fp64_cpu_contiguous(grad_events, "grad_events");
-    TORCH_CHECK(grad_events.dim() == 2 && grad_events.size(1) == 2 && grad_events.size(0) == packed.size(0),
-                "grad_events shape mismatch");
-    s = {x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2), x_bins.size(1) * q_bins.size(1)};
-    nmax = u_x.size(2);
-  }
+  const openmp_loits::Shape s{x_bins.size(0), x_bins.size(1), q_bins.size(1), x_bins.size(2), q_bins.size(2),
+                           x_bins.size(1) * q_bins.size(1)};
+  const int64_t nmax = u_x.size(2);
 
   at::Tensor grad_cdf_x;
   {

@@ -28,12 +28,6 @@ struct Allocation {
   int64_t active;
 };
 
-const char* device_name();
-bool supports_fp64();
-void bind_torch_hip_stream(uintptr_t native_stream, int device_index);
-void finish_submission(bool synchronize);
-void synchronize();
-
 Allocation allocate_counts(const double* QUANTOM_RESTRICT weights,
                            int64_t* QUANTOM_RESTRICT counts,
                            int64_t n_events,

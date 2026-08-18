@@ -92,13 +92,13 @@ if [[ -n "${ACPP_PREFIX:-}" ]]; then
 fi
 
 "$CXX" \
-  -O3 -std=c++17 -DNDEBUG -fPIC -shared \
+  -O3 -std=c++17 -DNDEBUG -DQUANTOM_SYCL_NATIVE=1 -fPIC -shared \
   --acpp-targets="$TARGETS" \
   "${BACKEND_FLAGS[@]}" \
   -I"$ROOT" \
   "${EXTRA[@]}" \
   "${RPATH_FLAGS[@]}" \
-  "$HERE/loits_core.cpp" \
+  "$HERE/loits_core.cpp" "$HERE/bindings.cpp" \
   -Wl,-soname,libquantom_loits_sycl.so \
   -o "$BUILD/libquantom_loits_sycl.so"
 

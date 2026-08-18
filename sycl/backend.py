@@ -1,7 +1,5 @@
-import ast
 import ctypes
 import os
-import re
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -14,7 +12,6 @@ from torch.utils.cpp_extension import load
 _EXTENSION = None
 _CORE_HANDLE = None
 _LOADED_VARIANT = None
-_VARIANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
 _DPCPP_HIP_BRIDGE_STREAMS = {}
 
 
@@ -26,32 +23,15 @@ def _build_root():
     return _root() / "build"
 
 
-def _validate_variant(variant):
-    variant = str(variant).strip()
+def selected_variant():
+    variant = os.environ.get("QUANTOM_SYCL_VARIANT")
     if not variant:
-        raise RuntimeError("QUANTOM_SYCL_VARIANT is empty")
-    if not _VARIANT_RE.fullmatch(variant):
-        raise RuntimeError(
-            "invalid SYCL variant name; use only letters, digits, '.', '_', '+', and '-'"
-        )
+        raise RuntimeError("QUANTOM_SYCL_VARIANT must be set explicitly for the SYCL backend")
     return variant
 
 
-def selected_variant():
-    value = os.environ.get("QUANTOM_SYCL_VARIANT")
-    if value is None:
-        raise RuntimeError(
-            "QUANTOM_SYCL_VARIANT must be set explicitly for the SYCL backend"
-        )
-    return _validate_variant(value)
-
-
 def variant_build_dir(variant=None):
-    if variant is None:
-        variant = selected_variant()
-    else:
-        variant = _validate_variant(variant)
-    return _build_root() / variant
+    return _build_root() / (variant or selected_variant())
 
 
 def core_library_path(variant=None):
@@ -72,7 +52,7 @@ def built_variants():
         return ()
     variants = []
     for path in root.iterdir():
-        if not path.is_dir() or not _VARIANT_RE.fullmatch(path.name):
+        if not path.is_dir():
             continue
         if _complete_build(path.name):
             variants.append(path.name)
@@ -80,59 +60,13 @@ def built_variants():
 
 
 def is_built(variant=None):
-    if variant is None:
-        try:
-            variant = selected_variant()
-        except RuntimeError:
-            return False
-    try:
-        return _complete_build(variant)
-    except RuntimeError:
-        return False
+    return _complete_build(variant or selected_variant())
 
 
 def _read_metadata(variant=None):
-    build = variant_build_dir(variant)
-    path = _metadata_path(variant)
-    if not path.is_file():
-        raise RuntimeError(
-            f"selected SYCL variant {build.name!r} is incomplete: missing variant.py"
-        )
-    try:
-        module = ast.parse(path.read_text(), filename=str(path))
-        if (
-            len(module.body) != 1
-            or not isinstance(module.body[0], ast.Assign)
-            or len(module.body[0].targets) != 1
-            or not isinstance(module.body[0].targets[0], ast.Name)
-            or module.body[0].targets[0].id != "METADATA"
-        ):
-            raise ValueError("expected a single METADATA assignment")
-        metadata = ast.literal_eval(module.body[0].value)
-    except (OSError, SyntaxError, ValueError) as exc:
-        raise RuntimeError(
-            f"selected SYCL variant {build.name!r} has invalid variant.py: {exc}"
-        ) from exc
-
-    if not isinstance(metadata, dict):
-        raise RuntimeError(
-            f"selected SYCL variant {build.name!r} has invalid variant.py: METADATA must be a dict"
-        )
-    for key in ("toolchain", "target", "torch_device", "architecture"):
-        if key not in metadata:
-            raise RuntimeError(
-                f"selected SYCL variant {build.name!r} has invalid variant.py: missing {key!r}"
-            )
-    for key in ("toolchain", "target", "torch_device"):
-        if not isinstance(metadata[key], str) or not metadata[key]:
-            raise RuntimeError(
-                f"selected SYCL variant {build.name!r} has invalid variant.py: {key!r} must be a non-empty string"
-            )
-    if metadata["architecture"] is not None and not isinstance(metadata["architecture"], str):
-        raise RuntimeError(
-            f"selected SYCL variant {build.name!r} has invalid variant.py: 'architecture' must be a string or None"
-        )
-    return metadata
+    namespace = {}
+    exec(_metadata_path(variant).read_text(), namespace)
+    return namespace["METADATA"]
 
 
 def configured_toolchain():
@@ -177,10 +111,7 @@ def availability(device="cpu"):
         suffix = f" Built variants: {', '.join(variants)}." if variants else ""
         return False, f"selected SYCL variant {variant!r} is not built.{suffix}"
 
-    try:
-        configured = configured_torch_device_mode()
-    except RuntimeError as exc:
-        return False, str(exc)
+    configured = configured_torch_device_mode()
     if configured != "auto" and configured != device.type:
         return False, (
             f"selected SYCL variant {variant!r} expects torch device "
@@ -248,11 +179,6 @@ def _dpcpp_hip_bridge_stream(device_index):
     stream = _DPCPP_HIP_BRIDGE_STREAMS.get(device_index)
     if stream is None:
         stream = torch.cuda.Stream(device=device_index)
-        native_stream = int(stream.cuda_stream)
-        if native_stream == 0:
-            raise RuntimeError(
-                "PyTorch returned the default/null HIP stream for the DPC++ bridge"
-            )
         _DPCPP_HIP_BRIDGE_STREAMS[device_index] = stream
     return stream
 
@@ -263,11 +189,6 @@ def _bind_dpcpp_hip_stream(extension, device):
         return
 
     device = torch.device(device)
-    if device.type != "cuda":
-        raise RuntimeError(
-            f"DPC++ HIP stream interop requires a torch cuda/ROCm device, got {device}"
-        )
-
     device_index = device.index
     if device_index is None:
         device_index = torch.cuda.current_device()
@@ -358,21 +279,14 @@ class SYCLLOITS(nn.Module):
     def __init__(self, device="cpu", compile=False, profile_regions=False, epsilon=1e-5):
         super().__init__()
         self.device = torch.device(device)
-        if self.device.type not in {"cpu", "cuda", "xpu"}:
-            raise ValueError("The SYCL backend expects a torch cpu, cuda/ROCm, or xpu device")
         if epsilon != 1e-5:
             raise ValueError("The SYCL backend currently uses the LOITS epsilon 1e-5")
         self.profile_regions = profile_regions
         self.seed = torch.initial_seed()
         self.sequence = 0
-        extension = prepare_extension(self.device, synchronize=False)
-        if not extension.supports_fp64():
-            raise RuntimeError(f"selected SYCL device does not support float64: {extension.device_name()}")
 
     def forward(self, theory_outputs, n_events):
         x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance = theory_outputs[:6]
-        if xsec_x.device.type != self.device.type:
-            raise ValueError(f"SYCL backend configured for {self.device}, got tensors on {xsec_x.device}")
         sequence = self.sequence
         self.sequence += 1
         with _region(self.profile_regions, "loits::autograd::forward"):

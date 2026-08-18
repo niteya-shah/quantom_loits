@@ -75,8 +75,6 @@ class CppLOITS(nn.Module):
     def __init__(self, device="cpu", compile=False, profile_regions=False, epsilon=1e-5):
         super().__init__()
         self.device = torch.device(device)
-        if self.device.type != "cpu":
-            raise ValueError("The C++ backend is CPU-only")
         if epsilon != 1e-5:
             raise ValueError("The C++ backend currently uses the LOITS epsilon 1e-5")
         self.profile_regions = profile_regions

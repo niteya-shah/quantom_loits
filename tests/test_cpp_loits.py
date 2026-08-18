@@ -124,14 +124,12 @@ def test_cpp_gan_training_and_region_profiler():
     assert "loits::autograd::forward" in names
     assert "loits::binding::forward" in names
     assert "loits::forward" in names
-    assert "loits::forward::validation" in names
     assert "loits::forward::allocation" in names
     assert "loits::forward::stream_compaction" in names
     assert "loits::forward::state_pack" in names
     assert "loits::autograd::backward" in names
     assert "loits::binding::backward" in names
     assert "loits::backward" in names
-    assert "loits::backward::validation" in names
     assert "loits::backward::interpolation_x" in names
     assert "loits::backward::cdf_x" in names
     assert "loits::backward::rho_x" in names

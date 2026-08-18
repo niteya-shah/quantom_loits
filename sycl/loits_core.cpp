@@ -3,83 +3,15 @@
 #include "../rng/philox.hpp"
 
 #include <sycl/sycl.hpp>
-#if defined(QUANTOM_DPCPP_HIP)
-#include <sycl/backend.hpp>
-#include <hip/hip_runtime_api.h>
-#endif
 
 #include <cstddef>
-#include <new>
 #include <cstdint>
-#if defined(QUANTOM_DPCPP_HIP)
-#include <optional>
-#endif
-#include <stdexcept>
-#include <string>
 
 namespace sycl_loits {
+
+sycl::queue& queue();
+
 namespace {
-
-#if defined(QUANTOM_DPCPP_HIP)
-constexpr auto kHipBackend = sycl::backend::ext_oneapi_hip;
-using HipNativeQueue = sycl::backend_input_t<kHipBackend, sycl::queue>;
-
-sycl::device hip_device_for_index(int device_index) {
-  int visible_index = 0;
-  for (const auto& platform : sycl::platform::get_platforms()) {
-    if (platform.get_backend() != kHipBackend) continue;
-    for (const auto& device :
-         platform.get_devices(sycl::info::device_type::gpu)) {
-      if (visible_index == device_index) return device;
-      ++visible_index;
-    }
-  }
-
-  throw std::runtime_error(
-      "DPC++ HIP could not resolve PyTorch device index " +
-      std::to_string(device_index) + " among " +
-      std::to_string(visible_index) + " visible HIP device(s)");
-}
-
-struct TorchQueueState {
-  int device_index = -1;
-  uintptr_t stream_handle = 0;
-  std::optional<sycl::device> device;
-  std::optional<sycl::context> context;
-  std::optional<sycl::queue> queue;
-};
-
-TorchQueueState& torch_queue_state() {
-  static thread_local TorchQueueState state;
-  return state;
-}
-
-sycl::queue& get_queue() {
-  auto& state = torch_queue_state();
-  if (!state.queue) {
-    throw std::runtime_error(
-        "DPC++ HIP queue is not bound to the current PyTorch HIP stream");
-  }
-  return *state.queue;
-}
-
-sycl::device info_device() {
-  auto& state = torch_queue_state();
-  if (state.device) return *state.device;
-  return hip_device_for_index(0);
-}
-#else
-sycl::queue& get_queue() {
-  static sycl::queue queue{
-      sycl::default_selector_v,
-      sycl::property_list{sycl::property::queue::in_order{}}};
-  return queue;
-}
-
-sycl::device info_device() {
-  return get_queue().get_device();
-}
-#endif
 
 inline int16_t interval(const double* QUANTOM_RESTRICT cdf,
                         int64_t k,
@@ -106,74 +38,14 @@ inline void decode_cell(int64_t global_cell,
 
 }  // namespace
 
-const char* device_name() {
-  static thread_local std::string name;
-  name = info_device().get_info<sycl::info::device::name>();
-  return name.c_str();
-}
-
-bool supports_fp64() {
-  return info_device().has(sycl::aspect::fp64);
-}
-
-void bind_torch_hip_stream(uintptr_t native_stream, int device_index) {
-#if defined(QUANTOM_DPCPP_HIP)
-  if (device_index < 0) {
-    throw std::invalid_argument("PyTorch HIP device index must be non-negative");
-  }
-
-  auto& state = torch_queue_state();
-  if (!state.device || state.device_index != device_index) {
-    state.queue.reset();
-    state.context.reset();
-    state.device.reset();
-
-    state.device.emplace(hip_device_for_index(device_index));
-    state.context.emplace(*state.device);
-    state.device_index = device_index;
-    state.stream_handle = 0;
-  }
-
-  if (!state.queue || state.stream_handle != native_stream) {
-    state.queue.reset();
-    const auto hip_stream = reinterpret_cast<HipNativeQueue>(native_stream);
-    state.queue.emplace(
-        sycl::make_queue<kHipBackend>(hip_stream, *state.context));
-    state.stream_handle = native_stream;
-  }
-#else
-  (void)native_stream;
-  (void)device_index;
-#endif
-}
-
-void finish_submission(bool wait) {
-  if (wait) get_queue().wait_and_throw();
-#if defined(QUANTOM_DPCPP_HIP)
-  const auto error = hipGetLastError();
-  if (error == hipSuccess || error == hipErrorNotFound) return;
-
-  const char* message = hipGetErrorString(error);
-  throw std::runtime_error(
-      "DPC++ HIP left error " + std::to_string(static_cast<int>(error)) +
-      ": " + (message ? message : "unknown HIP error"));
-#endif
-}
-
-void synchronize() {
-  finish_submission(true);
-}
-
 Allocation allocate_counts(const double* QUANTOM_RESTRICT weights,
                            int64_t* QUANTOM_RESTRICT counts,
                            int64_t n_events,
                            const Shape& s) {
   const int64_t n = s.batch * s.cells;
-  if (n == 0) return {0, 0};
 
-  auto& q = get_queue();
+  auto& q = queue();
   int64_t* result = sycl::malloc_shared<int64_t>(2, q);
-  if (!result) throw std::bad_alloc();
   result[0] = 0;
   result[1] = 0;
   const double scale = static_cast<double>(n_events);
@@ -202,9 +74,8 @@ void fill_uniform(float* QUANTOM_RESTRICT values,
                   int64_t count,
                   uint64_t seed,
                   uint64_t stream) {
-  if (count <= 0) return;
   const int64_t blocks = (count + 3) / 4;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(blocks)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(blocks)), [=](sycl::id<1> id) {
     const int64_t block = static_cast<int64_t>(id[0]);
     const auto random = quantom::rng::philox4x32_10(
         static_cast<uint64_t>(block), stream, seed);
@@ -222,10 +93,9 @@ void density_x(const double* QUANTOM_RESTRICT bins,
                double* QUANTOM_RESTRICT rho,
                const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.nx * s.kx;
   const int64_t xsec_y_stride = s.nx * s.kx;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
@@ -248,10 +118,9 @@ void density_q(const double* QUANTOM_RESTRICT bins,
                double* QUANTOM_RESTRICT rho,
                const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.ny * s.kq;
   const int64_t xsec_x_stride = s.ny * s.kq;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
@@ -274,10 +143,9 @@ void cdf_x(const double* QUANTOM_RESTRICT bins,
            double* QUANTOM_RESTRICT cdf,
            const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.nx * s.kx;
   const int64_t curve_y_stride = s.nx * s.kx;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
@@ -300,10 +168,9 @@ void cdf_q(const double* QUANTOM_RESTRICT bins,
            double* QUANTOM_RESTRICT cdf,
            const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.ny * s.kq;
   const int64_t curve_x_stride = s.ny * s.kq;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
@@ -329,11 +196,10 @@ void interpolate_x(const double* QUANTOM_RESTRICT bins,
                    int16_t* QUANTOM_RESTRICT indices,
                    const Shape& s) {
   const int64_t total_slots = s.batch * s.cells * nmax;
-  if (total_slots <= 0) return;
   const int64_t slots_per_batch = s.cells * nmax;
   const int64_t bins_batch_stride = s.nx * s.kx;
   const int64_t cdf_batch_stride = s.ny * s.nx * s.kx;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(total_slots)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(total_slots)), [=](sycl::id<1> id) {
     const int64_t p = static_cast<int64_t>(id[0]);
     const int64_t b = p / slots_per_batch;
     const int64_t within_batch = p - b * slots_per_batch;
@@ -364,11 +230,10 @@ void interpolate_q(const double* QUANTOM_RESTRICT bins,
                    int16_t* QUANTOM_RESTRICT indices,
                    const Shape& s) {
   const int64_t total_slots = s.batch * s.cells * nmax;
-  if (total_slots <= 0) return;
   const int64_t slots_per_batch = s.cells * nmax;
   const int64_t bins_batch_stride = s.ny * s.kq;
   const int64_t cdf_batch_stride = s.nx * s.ny * s.kq;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(total_slots)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(total_slots)), [=](sycl::id<1> id) {
     const int64_t p = static_cast<int64_t>(id[0]);
     const int64_t b = p / slots_per_batch;
     const int64_t within_batch = p - b * slots_per_batch;
@@ -399,8 +264,7 @@ int64_t compact(const double* QUANTOM_RESTRICT dense_x,
                 int64_t* QUANTOM_RESTRICT row_offsets,
                 const Shape& s) {
   const int64_t global_cells = s.batch * s.cells;
-  if (global_cells <= 0) return 0;
-  auto& q = get_queue();
+  auto& q = queue();
   const int64_t slots_per_batch = s.cells * nmax;
   const size_t max_wg = q.get_device().get_info<sycl::info::device::max_work_group_size>();
   const size_t wg = max_wg < 256 ? max_wg : 256;
@@ -436,7 +300,6 @@ int64_t compact(const double* QUANTOM_RESTRICT dense_x,
   });
 
   int64_t* valid_shared = sycl::malloc_shared<int64_t>(1, q);
-  if (!valid_shared) throw std::bad_alloc();
   *valid_shared = 0;
   q.single_task([=]() {
     int64_t prefix = 0;
@@ -504,10 +367,9 @@ void interpolation_vjp_x(const double* QUANTOM_RESTRICT grad_events,
                          const Shape& s) {
   (void)nmax;
   const int64_t global_cells = s.batch * s.cells;
-  if (global_cells <= 0) return;
   const int64_t bins_batch_stride = s.nx * s.kx;
   const int64_t cdf_batch_stride = s.ny * s.nx * s.kx;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(global_cells)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(global_cells)), [=](sycl::id<1> id) {
     const int64_t global_cell = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(global_cell, s, b, ix, iy);
@@ -540,10 +402,9 @@ void interpolation_vjp_q(const double* QUANTOM_RESTRICT grad_events,
                          const Shape& s) {
   (void)nmax;
   const int64_t global_cells = s.batch * s.cells;
-  if (global_cells <= 0) return;
   const int64_t bins_batch_stride = s.ny * s.kq;
   const int64_t cdf_batch_stride = s.nx * s.ny * s.kq;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(global_cells)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(global_cells)), [=](sycl::id<1> id) {
     const int64_t global_cell = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(global_cell, s, b, ix, iy);
@@ -570,10 +431,9 @@ void cdf_vjp_x(const double* QUANTOM_RESTRICT bins,
                double* QUANTOM_RESTRICT grad_rho,
                const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.nx * s.kx;
   const int64_t curve_y_stride = s.nx * s.kx;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
@@ -598,10 +458,9 @@ void cdf_vjp_q(const double* QUANTOM_RESTRICT bins,
                double* QUANTOM_RESTRICT grad_rho,
                const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.ny * s.kq;
   const int64_t curve_x_stride = s.ny * s.kq;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
@@ -627,10 +486,9 @@ void density_vjp_x(const double* QUANTOM_RESTRICT bins,
                    double* QUANTOM_RESTRICT grad_xsec,
                    const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.nx * s.kx;
   const int64_t curve_y_stride = s.nx * s.kx;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
@@ -661,10 +519,9 @@ void density_vjp_q(const double* QUANTOM_RESTRICT bins,
                    double* QUANTOM_RESTRICT grad_xsec,
                    const Shape& s) {
   const int64_t curves = s.batch * s.nx * s.ny;
-  if (curves <= 0) return;
   const int64_t bins_batch_stride = s.ny * s.kq;
   const int64_t curve_x_stride = s.ny * s.kq;
-  get_queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
+  queue().parallel_for(sycl::range<1>(static_cast<size_t>(curves)), [=](sycl::id<1> id) {
     const int64_t curve = static_cast<int64_t>(id[0]);
     int64_t b, ix, iy;
     decode_cell(curve, s, b, ix, iy);
