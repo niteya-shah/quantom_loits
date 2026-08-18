@@ -14,15 +14,15 @@ set -euo pipefail
 #   ./sycl/setup-cluster-sycl.sh illyad fetch acpp
 #   ./sycl/setup-cluster-sycl.sh illyad build acpp
 #
+#   ./sycl/setup-cluster-sycl.sh instinct fetch all
+#   ./sycl/setup-cluster-sycl.sh instinct build all
+#
 # Fetching is network-facing and idempotent. Building performs no git fetch or
 # clone. LLVM and AdaptiveCpp build directories are preserved, so rerunning an
 # interrupted build resumes the existing Ninja/CMake build instead of deleting it.
 #
-# Aurora uses the site DPC++ toolchain for PVC and can additionally build a
-# CPU-only AdaptiveCpp/OpenMP toolchain:
+# Aurora uses the site DPC++ toolchain for PVC; AdaptiveCpp remains disabled:
 #
-#   ./sycl/setup-cluster-sycl.sh aurora fetch acpp
-#   ./sycl/setup-cluster-sycl.sh aurora build acpp
 #   ./sycl/setup-cluster-sycl.sh aurora build dpcpp
 
 ###############################################################################
@@ -61,9 +61,18 @@ modules_illyad() {
     :
 }
 
+modules_instinct() {
+    # Instinct is used only for CPU scaling. No CUDA/ROCm modules are loaded.
+    module load gcc/13.2
+    module load cmake/3.31.1
+    module load boost/1.75
+    module load hwloc/2.4.0
+    :
+}
+
 modules_aurora() {
     # Aurora provides PyTorch/XPU and DPC++ through this module. AdaptiveCpp is
-    # source-built only for the CPU/OpenMP backend below.
+    # intentionally disabled there.
     module load frameworks
 }
 
@@ -73,7 +82,7 @@ modules_aurora() {
 
 usage() {
     cat >&2 <<'USAGE'
-usage: ./sycl/setup-cluster-sycl.sh <polaris|odyssey|illyad|aurora> <fetch|build> [all|acpp|dpcpp]
+usage: ./sycl/setup-cluster-sycl.sh <polaris|odyssey|illyad|instinct|aurora> <fetch|build> [all|acpp|dpcpp]
 
 Examples:
   ./sycl/setup-cluster-sycl.sh polaris fetch all
@@ -82,8 +91,8 @@ Examples:
   ./sycl/setup-cluster-sycl.sh odyssey build acpp
   ./sycl/setup-cluster-sycl.sh illyad fetch acpp
   ./sycl/setup-cluster-sycl.sh illyad build acpp
-  ./sycl/setup-cluster-sycl.sh aurora fetch acpp
-  ./sycl/setup-cluster-sycl.sh aurora build acpp
+  ./sycl/setup-cluster-sycl.sh instinct fetch all
+  ./sycl/setup-cluster-sycl.sh instinct build all
   ./sycl/setup-cluster-sycl.sh aurora build dpcpp
 
 fetch:
@@ -170,15 +179,30 @@ case "$SITE" in
         ACPP_VARIANT=acpp-illyad-h100
         DPCPP_VARIANT=dpcpp-illyad-h100
         ;;
-    aurora)
-        GPU_BACKEND=xpu
+    instinct)
+        GPU_BACKEND=cpu
         GPU_ARCH=
         ACPP_TARGET=cpu
         ACPP_ARCH=
         LLVM_TARGETS=cpu
+        DPCPP_TARGETS=cpu
+        ACPP_VARIANT=acpp-instinct-cpu
+        DPCPP_VARIANT=dpcpp-instinct-cpu
+        ;;
+    aurora)
+        GPU_BACKEND=xpu
+        GPU_ARCH=
+        ACPP_TARGET=
+        ACPP_ARCH=
+        LLVM_TARGETS=
         DPCPP_TARGETS=xpu
-        ACPP_VARIANT=acpp-aurora-cpu
+        ACPP_VARIANT=
         DPCPP_VARIANT=dpcpp-aurora-pvc
+        if [[ "$REQUESTED" == "acpp" ]]; then
+            echo "ERROR: AdaptiveCpp is intentionally disabled for Aurora." >&2
+            exit 2
+        fi
+        REQUESTED=dpcpp
         ;;
     *)
         echo "ERROR: unknown site '$SITE'" >&2
@@ -215,7 +239,7 @@ sanitize_ref() {
 
 LLVM_PREFIX="$SITE_ROOT/llvm-$LLVM_VERSION"
 ACPP_FLAVOR=
-if [[ "$SITE" == "aurora" ]]; then
+if [[ "$SITE" == "instinct" ]]; then
     ACPP_FLAVOR=-cpu
 fi
 ACPP_PREFIX="$SITE_ROOT/adaptivecpp-$(sanitize_ref "$ACPP_REF")$ACPP_FLAVOR"
@@ -392,7 +416,7 @@ install_acpp() {
 
     echo
     echo "=== Building/resuming AdaptiveCpp $ACPP_REF ==="
-    if [[ "$SITE" == "aurora" ]]; then
+    if [[ "$SITE" == "instinct" ]]; then
         ACPP_CPU_ONLY=1 ACPP_REF="$ACPP_REF" ACPP_JOBS="$JOBS" ./sycl/install-acpp.sh \
             "$ACPP_PREFIX" "$LLVM_PREFIX" "$ACPP_REF"
     else
@@ -476,11 +500,12 @@ fi
 case "$SITE" in
     polaris) modules_polaris ;;
     odyssey) modules_odyssey ;;
-    illyad)  modules_illyad ;;
-    aurora)  modules_aurora ;;
+    illyad)   modules_illyad ;;
+    instinct) modules_instinct ;;
+    aurora)   modules_aurora ;;
 esac
 
-if [[ "$SITE" != "aurora" || "$REQUESTED" == "acpp" || "$REQUESTED" == "all" ]]; then
+if [[ "$SITE" != "aurora" ]]; then
     configure_host_gcc
 fi
 if [[ "$SITE" != "aurora" ]]; then

@@ -29,9 +29,10 @@ For example, a shared cluster checkout can contain:
     sycl/build/acpp-polaris-a100/
     sycl/build/acpp-illyad-h100/
     sycl/build/acpp-odyssey-mi300a/
-    sycl/build/acpp-aurora-cpu/
+    sycl/build/acpp-instinct-cpu/
     sycl/build/dpcpp-illyad-h100/
     sycl/build/dpcpp-odyssey-mi300a/
+    sycl/build/dpcpp-instinct-cpu/
 
 All variants compile the same `loits_core.cpp` and `runtime.cpp`.
 
@@ -64,16 +65,19 @@ The cluster helper keeps compiler installs and work trees site-specific under
     ./sycl/setup-cluster-sycl.sh illyad build dpcpp
 
 Illyad targets its NVIDIA H100 with `sm_90`. Odyssey remains isolated under its
-own site directories even when both machines share the same filesystem. On
-Aurora, DPC++ remains site-provided for PVC/XPU while AdaptiveCpp is built only
-for its OpenMP CPU backend:
+own site directories even when both machines share the same filesystem. Instinct
+is the CPU-only site for scaling studies:
 
-    ./sycl/setup-cluster-sycl.sh aurora fetch acpp
-    ./sycl/setup-cluster-sycl.sh aurora build acpp
+    ./sycl/setup-cluster-sycl.sh instinct fetch all
+    ./sycl/setup-cluster-sycl.sh instinct build all
 
-The Aurora AdaptiveCpp build uses LLVM's host CPU target only and forces CUDA,
-ROCm, OpenCL, Level Zero, and Vulkan runtime backends off. The resulting QuantOm
-variant is `acpp-aurora-cpu`.
+The Instinct AdaptiveCpp install uses LLVM's host CPU target only and forces
+CUDA, ROCm, OpenCL, Level Zero, and Vulkan runtime backends off. Its QuantOm
+CPU target uses AdaptiveCpp's accelerated OpenMP compilation flow
+(`omp.accelerated`). DPC++ is built separately with only `--native_cpu`; no
+CUDA or HIP backend and no optional oneTBB scheduler are enabled. The resulting
+variants are `acpp-instinct-cpu` and `dpcpp-instinct-cpu`. Aurora remains
+PVC/XPU-only and uses its site-provided DPC++ toolchain.
 
 ## Install the SYCL toolchains
 
@@ -149,7 +153,8 @@ The CMake configuration uses AdaptiveCpp's current recommended `full` compiler
 feature profile and points it to the selected LLVM with `LLVM_DIR` and
 `CLANG_EXECUTABLE_PATH`. If `CUDA_PATH` is supplied, the installer passes
 `CUDA_TOOLKIT_ROOT_DIR` and enables the CUDA backend. If `ROCM_PATH` is supplied,
-it passes `ROCM_PATH` and enables the ROCm backend.
+it passes `ROCM_PATH` and enables the ROCm backend. `ACPP_CPU_ONLY=1` overrides
+that behavior and forces CUDA, ROCm, OpenCL, Level Zero, and Vulkan backends off.
 
 For the generic AMD path, AdaptiveCpp currently requires its LLVM version to be
 no newer than the LLVM version bundled with ROCm. That compatibility must be
@@ -223,7 +228,7 @@ relocated copy of it. After building:
 The build scripts require an explicit variant name and target. CUDA/HIP builds
 also require an explicit offload architecture.
 
-AdaptiveCpp:
+AdaptiveCpp (`cpu` selects `omp.accelerated`; `omp` retains the plain OpenMP flow):
 
     ./sycl/build-acpp.sh acpp-generic generic
     ./sycl/build-acpp.sh acpp-cpu cpu

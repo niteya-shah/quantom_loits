@@ -46,8 +46,13 @@ case "$MODE" in
     [[ -z "${ROCM_PATH:-}" ]] || BACKEND_FLAGS+=("--acpp-rocm-path=$ROCM_PATH")
     TORCH_DEVICE="auto"
     ;;
-  cpu|omp)
-    [[ -z "$ARCH" ]] || { echo "$MODE target does not take an architecture" >&2; exit 2; }
+  cpu)
+    [[ -z "$ARCH" ]] || { echo "cpu target does not take an architecture" >&2; exit 2; }
+    TARGETS="omp.accelerated"
+    TORCH_DEVICE="cpu"
+    ;;
+  omp)
+    [[ -z "$ARCH" ]] || { echo "omp target does not take an architecture" >&2; exit 2; }
     TARGETS="omp"
     TORCH_DEVICE="cpu"
     ;;
@@ -89,6 +94,11 @@ read -r -a EXTRA <<< "${SYCL_EXTRA_FLAGS:-}"
 RPATH_FLAGS=()
 if [[ -n "${ACPP_PREFIX:-}" ]]; then
   RPATH_FLAGS+=("-Wl,-rpath,$ACPP_PREFIX/lib")
+fi
+if [[ "$MODE" == "cpu" && -n "${LLVM_PREFIX:-}" ]]; then
+  LIBOMP="$(find "$LLVM_PREFIX/lib" -name libomp.so -print -quit 2>/dev/null || true)"
+  [[ -n "$LIBOMP" ]] || { echo "AdaptiveCpp CPU libomp.so not found under $LLVM_PREFIX/lib" >&2; exit 2; }
+  RPATH_FLAGS+=("-Wl,-rpath,$(dirname "$LIBOMP")")
 fi
 
 "$CXX" \

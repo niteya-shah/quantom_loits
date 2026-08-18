@@ -226,6 +226,17 @@ fi
 
 cmake --build "$BUILD" --target install --parallel "$JOBS"
 
+# AdaptiveCpp v25.10.0 has a host-only rootn implementation that Clang 20
+# rejects because T{y} performs narrowing from int to float/double. Keep this
+# compatibility fix local to CPU-only installs instead of modifying the shared
+# source cache used by accelerator toolchains.
+if [[ "$CPU_ONLY" == "1" ]]; then
+  HOST_BUILTINS="$PREFIX/include/AdaptiveCpp/hipSYCL/sycl/libkernel/host/builtins.hpp"
+  if [[ -f "$HOST_BUILTINS" ]] && grep -Fq 'std::pow(x, T{1}/T{y})' "$HOST_BUILTINS"; then
+    sed -i 's/std::pow(x, T{1}\/T{y})/std::pow(x, T{1}\/static_cast<T>(y))/g' "$HOST_BUILTINS"
+  fi
+fi
+
 ACPP="$PREFIX/bin/acpp"
 if [[ ! -x "$ACPP" ]]; then
   echo "AdaptiveCpp install completed but compiler driver was not found: $ACPP" >&2
