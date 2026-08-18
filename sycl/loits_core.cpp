@@ -1,4 +1,5 @@
 #include "loits_core.hpp"
+#include "runtime.hpp"
 
 #include "../rng/philox.hpp"
 
@@ -8,8 +9,6 @@
 #include <cstdint>
 
 namespace sycl_loits {
-
-sycl::queue& queue();
 
 namespace {
 

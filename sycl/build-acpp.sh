@@ -98,7 +98,7 @@ fi
   -I"$ROOT" \
   "${EXTRA[@]}" \
   "${RPATH_FLAGS[@]}" \
-  "$HERE/loits_core.cpp" "$HERE/bindings.cpp" \
+  "$HERE/loits_core.cpp" "$HERE/runtime.cpp" \
   -Wl,-soname,libquantom_loits_sycl.so \
   -o "$BUILD/libquantom_loits_sycl.so"
 

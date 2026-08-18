@@ -32,7 +32,7 @@ For example, a shared cluster checkout can contain:
     sycl/build/dpcpp-illyad-h100/
     sycl/build/dpcpp-odyssey-mi300a/
 
-All variants compile the same `loits_core.cpp`.
+All variants compile the same `loits_core.cpp` and `runtime.cpp`.
 
 At runtime a SYCL variant is mandatory:
 
