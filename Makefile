@@ -8,6 +8,7 @@ GRID_SIZE ?= 10
 WARMUP ?= 5
 ITERATIONS ?= 10
 SEED ?= 0
+SITE ?=
 SYCL_VARIANT ?=
 SYCL_TARGET ?=
 SYCL_ARCH ?=
@@ -136,7 +137,8 @@ benchmark:
 		--grid-size $(GRID_SIZE) \
 		--warmup $(WARMUP) \
 		--iterations $(ITERATIONS) \
-		--seed $(SEED)
+		--seed $(SEED) \
+		--site "$(SITE)"
 
 profile:
 	$(PYTHON) benchmark_training.py \
@@ -147,6 +149,7 @@ profile:
 		--warmup $(WARMUP) \
 		--iterations $(ITERATIONS) \
 		--seed $(SEED) \
+		--site "$(SITE)" \
 		--regions \
 		--trace
 

@@ -43,11 +43,13 @@ def run(args, profile_regions=False):
     suffix = "regions" if profile_regions else "training"
     implementation = implementation_name(args.backend)
     threads = native_threads(args.backend)
+    site = safe_component(args.site) if args.backend == "torch" and args.site else ""
     stem = "_".join(
         part
         for part in [
             suffix,
             safe_component(implementation),
+            site,
             safe_component(args.device.replace(":", "-")),
             str(args.events),
             f"t{threads}" if threads else "",
@@ -87,6 +89,7 @@ def main():
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", default="results/training")
+    parser.add_argument("--site", default=os.environ.get("QUANTOM_SITE", ""))
     parser.add_argument("--regions", action="store_true")
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--list-backends", action="store_true")
