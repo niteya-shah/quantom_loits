@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 
 namespace sycl_loits {
 
@@ -354,6 +355,103 @@ int64_t compact(const double* QUANTOM_RESTRICT dense_x,
   return valid;
 }
 
+namespace {
+
+constexpr size_t kInterpolationVjpWorkGroupSize = 256;
+
+template <int K, bool QAxis>
+void interpolation_vjp_specialized(const double* QUANTOM_RESTRICT grad_events,
+                                    const int64_t* QUANTOM_RESTRICT packed,
+                                    const int64_t* QUANTOM_RESTRICT row_offsets,
+                                    const double* QUANTOM_RESTRICT bins,
+                                    const double* QUANTOM_RESTRICT cdf,
+                                    const float* QUANTOM_RESTRICT u,
+                                    const int16_t* QUANTOM_RESTRICT indices,
+                                    double* QUANTOM_RESTRICT grad_cdf,
+                                    const Shape& s) {
+  constexpr size_t wg = kInterpolationVjpWorkGroupSize;
+  const int64_t global_cells = s.batch * s.cells;
+  const int64_t bins_batch_stride = (QAxis ? s.ny : s.nx) * K;
+  const int64_t cdf_batch_stride = s.nx * s.ny * K;
+  queue().parallel_for(
+      sycl::nd_range<1>{sycl::range<1>(static_cast<size_t>(global_cells) * wg), sycl::range<1>(wg)},
+      [=](sycl::nd_item<1> item) {
+        const int64_t global_cell = static_cast<int64_t>(item.get_group(0));
+        const int64_t lane = static_cast<int64_t>(item.get_local_id(0));
+        int64_t b, ix, iy;
+        decode_cell(global_cell, s, b, ix, iy);
+        const int64_t curve_index = QAxis ? ix * s.ny + iy : iy * s.nx + ix;
+        const int64_t bin_index = QAxis ? iy : ix;
+        const double* curve = cdf + b * cdf_batch_stride + curve_index * K;
+        const double* bin = bins + b * bins_batch_stride + bin_index * K;
+        double* gcurve = grad_cdf + b * cdf_batch_stride + curve_index * K;
+        const int64_t row_begin = row_offsets[global_cell];
+        const int64_t row_end = row_offsets[global_cell + 1];
+        double accum[K] = {};
+
+        for (int64_t row = row_begin + lane; row < row_end; row += static_cast<int64_t>(wg)) {
+          const int64_t p = packed[row];
+          const int64_t j = indices[p];
+          const double c0 = curve[j];
+          const double inv_d = 1.0 / (curve[j + 1] - c0 + kEpsilon);
+          const double t = static_cast<double>(u[p]) - c0;
+          const double upstream =
+              grad_events[row * 2 + (QAxis ? 1 : 0)] * (bin[j + 1] - bin[j]);
+          const double left = upstream * (-inv_d + t * inv_d * inv_d);
+          const double right = -upstream * t * inv_d * inv_d;
+#pragma unroll
+          for (int slot = 0; slot < K; ++slot) {
+            if (j == slot) accum[slot] += left;
+            if (j + 1 == slot) accum[slot] += right;
+          }
+        }
+
+#pragma unroll
+        for (int slot = 0; slot < K; ++slot) {
+          const double total = sycl::reduce_over_group(
+              item.get_group(), accum[slot], sycl::plus<double>());
+          if (lane == 0) gcurve[slot] = total;
+        }
+      });
+}
+
+template <bool QAxis>
+void interpolation_vjp_dispatch(const double* QUANTOM_RESTRICT grad_events,
+                                 const int64_t* QUANTOM_RESTRICT packed,
+                                 const int64_t* QUANTOM_RESTRICT row_offsets,
+                                 const double* QUANTOM_RESTRICT bins,
+                                 const double* QUANTOM_RESTRICT cdf,
+                                 const float* QUANTOM_RESTRICT u,
+                                 const int16_t* QUANTOM_RESTRICT indices,
+                                 double* QUANTOM_RESTRICT grad_cdf,
+                                 const Shape& s) {
+  const int64_t k = QAxis ? s.kq : s.kx;
+  switch (k) {
+    case 4:
+      return interpolation_vjp_specialized<4, QAxis>(
+          grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
+    case 5:
+      return interpolation_vjp_specialized<5, QAxis>(
+          grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
+    case 8:
+      return interpolation_vjp_specialized<8, QAxis>(
+          grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
+    case 10:
+      return interpolation_vjp_specialized<10, QAxis>(
+          grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
+    case 16:
+      return interpolation_vjp_specialized<16, QAxis>(
+          grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
+    case 32:
+      return interpolation_vjp_specialized<32, QAxis>(
+          grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
+    default:
+      throw std::runtime_error("unsupported interpolation VJP K");
+  }
+}
+
+}  // namespace
+
 void interpolation_vjp_x(const double* QUANTOM_RESTRICT grad_events,
                          const int64_t* QUANTOM_RESTRICT packed,
                          const int64_t* QUANTOM_RESTRICT row_offsets,
@@ -365,28 +463,8 @@ void interpolation_vjp_x(const double* QUANTOM_RESTRICT grad_events,
                          double* QUANTOM_RESTRICT grad_cdf,
                          const Shape& s) {
   (void)nmax;
-  const int64_t global_cells = s.batch * s.cells;
-  const int64_t bins_batch_stride = s.nx * s.kx;
-  const int64_t cdf_batch_stride = s.ny * s.nx * s.kx;
-  queue().parallel_for(sycl::range<1>(static_cast<size_t>(global_cells)), [=](sycl::id<1> id) {
-    const int64_t global_cell = static_cast<int64_t>(id[0]);
-    int64_t b, ix, iy;
-    decode_cell(global_cell, s, b, ix, iy);
-    const double* curve = cdf + b * cdf_batch_stride + (iy * s.nx + ix) * s.kx;
-    const double* bin = bins + b * bins_batch_stride + ix * s.kx;
-    double* gcurve = grad_cdf + b * cdf_batch_stride + (iy * s.nx + ix) * s.kx;
-    for (int64_t t = 0; t < s.kx; ++t) gcurve[t] = 0.0;
-    for (int64_t row = row_offsets[global_cell]; row < row_offsets[global_cell + 1]; ++row) {
-      const int64_t p = packed[row];
-      const int64_t j = indices[p];
-      const double c0 = curve[j];
-      const double inv_d = 1.0 / (curve[j + 1] - c0 + kEpsilon);
-      const double t = static_cast<double>(u[p]) - c0;
-      const double upstream = grad_events[row * 2] * (bin[j + 1] - bin[j]);
-      gcurve[j] += upstream * (-inv_d + t * inv_d * inv_d);
-      gcurve[j + 1] -= upstream * t * inv_d * inv_d;
-    }
-  });
+  interpolation_vjp_dispatch<false>(
+      grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
 }
 
 void interpolation_vjp_q(const double* QUANTOM_RESTRICT grad_events,
@@ -400,28 +478,8 @@ void interpolation_vjp_q(const double* QUANTOM_RESTRICT grad_events,
                          double* QUANTOM_RESTRICT grad_cdf,
                          const Shape& s) {
   (void)nmax;
-  const int64_t global_cells = s.batch * s.cells;
-  const int64_t bins_batch_stride = s.ny * s.kq;
-  const int64_t cdf_batch_stride = s.nx * s.ny * s.kq;
-  queue().parallel_for(sycl::range<1>(static_cast<size_t>(global_cells)), [=](sycl::id<1> id) {
-    const int64_t global_cell = static_cast<int64_t>(id[0]);
-    int64_t b, ix, iy;
-    decode_cell(global_cell, s, b, ix, iy);
-    const double* curve = cdf + b * cdf_batch_stride + (ix * s.ny + iy) * s.kq;
-    const double* bin = bins + b * bins_batch_stride + iy * s.kq;
-    double* gcurve = grad_cdf + b * cdf_batch_stride + (ix * s.ny + iy) * s.kq;
-    for (int64_t t = 0; t < s.kq; ++t) gcurve[t] = 0.0;
-    for (int64_t row = row_offsets[global_cell]; row < row_offsets[global_cell + 1]; ++row) {
-      const int64_t p = packed[row];
-      const int64_t j = indices[p];
-      const double c0 = curve[j];
-      const double inv_d = 1.0 / (curve[j + 1] - c0 + kEpsilon);
-      const double t = static_cast<double>(u[p]) - c0;
-      const double upstream = grad_events[row * 2 + 1] * (bin[j + 1] - bin[j]);
-      gcurve[j] += upstream * (-inv_d + t * inv_d * inv_d);
-      gcurve[j + 1] -= upstream * t * inv_d * inv_d;
-    }
-  });
+  interpolation_vjp_dispatch<true>(
+      grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
 }
 
 void cdf_vjp_x(const double* QUANTOM_RESTRICT bins,
