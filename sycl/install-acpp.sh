@@ -21,6 +21,8 @@ Environment overrides:
   ACPP_JOBS         parallel build jobs (default: all available cores)
   ACPP_BUILD_TYPE   CMake build type (default: Release)
   ACPP_CMAKE_ARGS   additional whitespace-separated CMake arguments
+  ACPP_CPU_ONLY     set to 1 to build only the OpenMP CPU runtime/backend;
+                    CUDA, ROCm, OpenCL, Level Zero, and Vulkan are forced off
   ACPP_GCC_INSTALL_DIR
                     GCC installation selected for Clang's host C/C++ runtime.
                     The cluster helper derives this from g++ on PATH.
@@ -45,6 +47,7 @@ LLVM_PREFIX="$2"
 REF="${3:-${ACPP_REF:-}}"
 JOBS="${ACPP_JOBS:-$(nproc)}"
 BUILD_TYPE="${ACPP_BUILD_TYPE:-Release}"
+CPU_ONLY="${ACPP_CPU_ONLY:-0}"
 WORK_ROOT="${ACPP_WORKDIR:-${TMPDIR:-/tmp}/quantom-adaptivecpp-${USER:-user}}"
 SOURCE="${ACPP_SOURCE_DIR:-}"
 BUILD="$WORK_ROOT/build"
@@ -52,6 +55,7 @@ BUILD="$WORK_ROOT/build"
 [[ -n "$PREFIX" ]] || { echo "install prefix must not be empty" >&2; exit 2; }
 [[ -n "$LLVM_PREFIX" ]] || { echo "LLVM prefix must not be empty" >&2; exit 2; }
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "ACPP_JOBS must be a positive integer" >&2; exit 2; }
+[[ "$CPU_ONLY" == "0" || "$CPU_ONLY" == "1" ]] || { echo "ACPP_CPU_ONLY must be 0 or 1" >&2; exit 2; }
 
 LLVM_CLANG="$LLVM_PREFIX/bin/clang"
 LLVM_CLANGXX="$LLVM_PREFIX/bin/clang++"
@@ -172,14 +176,26 @@ if [[ "${ACPP_EXPERIMENTAL_LLVM:-0}" == "1" ]]; then
   CMAKE_CMD+=(-DACPP_EXPERIMENTAL_LLVM=ON)
 fi
 
-if [[ -n "${CUDA_PATH:-}" ]]; then
-  CMAKE_CMD+=("-DCUDA_TOOLKIT_ROOT_DIR=$CUDA_PATH" -DWITH_CUDA_BACKEND=ON)
-fi
-if [[ -n "${ROCM_PATH:-}" ]]; then
-  CMAKE_CMD+=("-DROCM_PATH=$ROCM_PATH" -DWITH_ROCM_BACKEND=ON)
+if [[ "$CPU_ONLY" != "1" ]]; then
+  if [[ -n "${CUDA_PATH:-}" ]]; then
+    CMAKE_CMD+=("-DCUDA_TOOLKIT_ROOT_DIR=$CUDA_PATH" -DWITH_CUDA_BACKEND=ON)
+  fi
+  if [[ -n "${ROCM_PATH:-}" ]]; then
+    CMAKE_CMD+=("-DROCM_PATH=$ROCM_PATH" -DWITH_ROCM_BACKEND=ON)
+  fi
 fi
 
 CMAKE_CMD+=("${EXTRA_CMAKE[@]}")
+
+if [[ "$CPU_ONLY" == "1" ]]; then
+  CMAKE_CMD+=(
+    -DWITH_CUDA_BACKEND=OFF
+    -DWITH_ROCM_BACKEND=OFF
+    -DWITH_OPENCL_BACKEND=OFF
+    -DWITH_LEVEL_ZERO_BACKEND=OFF
+    -DWITH_VULKAN_BACKEND=OFF
+  )
+fi
 
 printf 'Configuring AdaptiveCpp:'
 printf ' %q' "${CMAKE_CMD[@]}"
@@ -193,6 +209,18 @@ if [[ -n "${ACPP_GCC_INSTALL_DIR:-}" ]]; then
       echo "Expected --gcc-install-dir=$ACPP_GCC_INSTALL_DIR" >&2
       exit 2
     fi
+  done
+fi
+
+if [[ "$CPU_ONLY" == "1" ]]; then
+  for backend in WITH_CUDA_BACKEND WITH_ROCM_BACKEND WITH_OPENCL_BACKEND WITH_LEVEL_ZERO_BACKEND WITH_VULKAN_BACKEND; do
+    value="$(sed -n "s/^${backend}:[^=]*=//p" "$BUILD/CMakeCache.txt" | tail -n 1)"
+    case "$value" in
+      ON|TRUE|1)
+        echo "ERROR: $backend is enabled in a CPU-only AdaptiveCpp build." >&2
+        exit 2
+        ;;
+    esac
   done
 fi
 
@@ -210,6 +238,7 @@ adaptivecpp_ref=${REF:-un-pinned}
 adaptivecpp_commit=${COMMIT:-unknown}
 cuda_path=${CUDA_PATH:-}
 rocm_path=${ROCM_PATH:-}
+cpu_only=$CPU_ONLY
 gcc_install_dir=${ACPP_GCC_INSTALL_DIR:-}
 INFO
 

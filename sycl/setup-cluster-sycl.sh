@@ -18,8 +18,11 @@ set -euo pipefail
 # clone. LLVM and AdaptiveCpp build directories are preserved, so rerunning an
 # interrupted build resumes the existing Ninja/CMake build instead of deleting it.
 #
-# Aurora uses the site DPC++ toolchain and therefore only needs:
+# Aurora uses the site DPC++ toolchain for PVC and can additionally build a
+# CPU-only AdaptiveCpp/OpenMP toolchain:
 #
+#   ./sycl/setup-cluster-sycl.sh aurora fetch acpp
+#   ./sycl/setup-cluster-sycl.sh aurora build acpp
 #   ./sycl/setup-cluster-sycl.sh aurora build dpcpp
 
 ###############################################################################
@@ -59,9 +62,9 @@ modules_illyad() {
 }
 
 modules_aurora() {
-    # Load/source Aurora's site-supported oneAPI/DPC++ environment here.
-    # AdaptiveCpp is intentionally not built on Aurora.
-    :
+    # Aurora provides PyTorch/XPU and DPC++ through this module. AdaptiveCpp is
+    # source-built only for the CPU/OpenMP backend below.
+    module load frameworks
 }
 
 ###############################################################################
@@ -79,6 +82,8 @@ Examples:
   ./sycl/setup-cluster-sycl.sh odyssey build acpp
   ./sycl/setup-cluster-sycl.sh illyad fetch acpp
   ./sycl/setup-cluster-sycl.sh illyad build acpp
+  ./sycl/setup-cluster-sycl.sh aurora fetch acpp
+  ./sycl/setup-cluster-sycl.sh aurora build acpp
   ./sycl/setup-cluster-sycl.sh aurora build dpcpp
 
 fetch:
@@ -138,6 +143,8 @@ case "$SITE" in
     polaris)
         GPU_BACKEND=cuda
         GPU_ARCH=sm_80
+        ACPP_TARGET=cuda
+        ACPP_ARCH=sm_80
         LLVM_TARGETS=cpu,cuda
         DPCPP_TARGETS=cuda
         ACPP_VARIANT=acpp-polaris-a100
@@ -146,6 +153,8 @@ case "$SITE" in
     odyssey)
         GPU_BACKEND=hip
         GPU_ARCH=gfx942
+        ACPP_TARGET=hip
+        ACPP_ARCH=gfx942
         LLVM_TARGETS=cpu,hip
         DPCPP_TARGETS=hip
         ACPP_VARIANT=acpp-odyssey-mi300a
@@ -154,6 +163,8 @@ case "$SITE" in
     illyad)
         GPU_BACKEND=cuda
         GPU_ARCH=sm_90
+        ACPP_TARGET=cuda
+        ACPP_ARCH=sm_90
         LLVM_TARGETS=cpu,cuda
         DPCPP_TARGETS=cuda
         ACPP_VARIANT=acpp-illyad-h100
@@ -162,15 +173,12 @@ case "$SITE" in
     aurora)
         GPU_BACKEND=xpu
         GPU_ARCH=
-        LLVM_TARGETS=
+        ACPP_TARGET=cpu
+        ACPP_ARCH=
+        LLVM_TARGETS=cpu
         DPCPP_TARGETS=xpu
-        ACPP_VARIANT=
+        ACPP_VARIANT=acpp-aurora-cpu
         DPCPP_VARIANT=dpcpp-aurora-pvc
-        if [[ "$REQUESTED" == "acpp" ]]; then
-            echo "ERROR: AdaptiveCpp is intentionally disabled for Aurora." >&2
-            exit 2
-        fi
-        REQUESTED=dpcpp
         ;;
     *)
         echo "ERROR: unknown site '$SITE'" >&2
@@ -206,11 +214,15 @@ sanitize_ref() {
 }
 
 LLVM_PREFIX="$SITE_ROOT/llvm-$LLVM_VERSION"
-ACPP_PREFIX="$SITE_ROOT/adaptivecpp-$(sanitize_ref "$ACPP_REF")"
+ACPP_FLAVOR=
+if [[ "$SITE" == "aurora" ]]; then
+    ACPP_FLAVOR=-cpu
+fi
+ACPP_PREFIX="$SITE_ROOT/adaptivecpp-$(sanitize_ref "$ACPP_REF")$ACPP_FLAVOR"
 DPCPP_PREFIX="$SITE_ROOT/dpcpp"
 
 export LLVM_WORKDIR="${LLVM_WORKDIR:-$TOOLCHAIN_WORK_ROOT/$SITE/llvm-$LLVM_VERSION}"
-export ACPP_WORKDIR="${ACPP_WORKDIR:-$TOOLCHAIN_WORK_ROOT/$SITE/acpp-$(sanitize_ref "$ACPP_REF")-llvm-$LLVM_VERSION}"
+export ACPP_WORKDIR="${ACPP_WORKDIR:-$TOOLCHAIN_WORK_ROOT/$SITE/acpp-$(sanitize_ref "$ACPP_REF")$ACPP_FLAVOR-llvm-$LLVM_VERSION}"
 export DPCPP_WORKDIR="${DPCPP_WORKDIR:-$TOOLCHAIN_WORK_ROOT/$SITE/dpcpp-$(sanitize_ref "$DPCPP_REF")}"
 
 # Prefer the new shared source cache, but reuse checkouts created by the older
@@ -324,21 +336,27 @@ print_config() {
     echo "toolchain root:      $TOOLCHAIN_ROOT"
     echo "source root:         $TOOLCHAIN_SOURCE_ROOT"
     echo "work root:           $TOOLCHAIN_WORK_ROOT"
-    if [[ "$SITE" != "aurora" ]]; then
+    if [[ "$REQUESTED" == "acpp" || "$REQUESTED" == "all" ]]; then
         echo "host gcc:            ${LLVM_C_COMPILER:-}"
         echo "host g++:            ${LLVM_CXX_COMPILER:-}"
         echo "GCC install dir:     ${ACPP_GCC_INSTALL_DIR:-}"
         echo "LLVM:                $LLVM_VERSION"
+        echo "LLVM targets:        $LLVM_TARGETS"
         echo "LLVM source:         $LLVM_SOURCE_DIR"
         echo "LLVM prefix:         $LLVM_PREFIX"
         echo "AdaptiveCpp ref:     $ACPP_REF"
+        echo "AdaptiveCpp target:  $ACPP_TARGET"
         echo "AdaptiveCpp source:  $ACPP_SOURCE_DIR"
         echo "AdaptiveCpp prefix:  $ACPP_PREFIX"
-        echo "DPC++ ref:           $DPCPP_REF"
-        echo "DPC++ source:        $DPCPP_SOURCE_DIR"
-        echo "DPC++ prefix:        $DPCPP_PREFIX"
-    else
-        echo "DPC++:               site-provided"
+    fi
+    if [[ "$REQUESTED" == "dpcpp" || "$REQUESTED" == "all" ]]; then
+        if [[ "$SITE" == "aurora" ]]; then
+            echo "DPC++:               site-provided"
+        else
+            echo "DPC++ ref:           $DPCPP_REF"
+            echo "DPC++ source:        $DPCPP_SOURCE_DIR"
+            echo "DPC++ prefix:        $DPCPP_PREFIX"
+        fi
     fi
     [[ -z "${CUDA_PATH:-}" ]] || echo "CUDA_PATH:           $CUDA_PATH"
     [[ -z "${ROCM_PATH:-}" ]] || echo "ROCM_PATH:           $ROCM_PATH"
@@ -374,8 +392,13 @@ install_acpp() {
 
     echo
     echo "=== Building/resuming AdaptiveCpp $ACPP_REF ==="
-    ACPP_REF="$ACPP_REF" ACPP_JOBS="$JOBS" ./sycl/install-acpp.sh \
-        "$ACPP_PREFIX" "$LLVM_PREFIX" "$ACPP_REF"
+    if [[ "$SITE" == "aurora" ]]; then
+        ACPP_CPU_ONLY=1 ACPP_REF="$ACPP_REF" ACPP_JOBS="$JOBS" ./sycl/install-acpp.sh \
+            "$ACPP_PREFIX" "$LLVM_PREFIX" "$ACPP_REF"
+    else
+        ACPP_REF="$ACPP_REF" ACPP_JOBS="$JOBS" ./sycl/install-acpp.sh \
+            "$ACPP_PREFIX" "$LLVM_PREFIX" "$ACPP_REF"
+    fi
 }
 
 install_dpcpp() {
@@ -395,8 +418,8 @@ build_acpp_backend() {
     echo "=== Building QuantOm AdaptiveCpp backend: $ACPP_VARIANT ==="
     ACPP_PREFIX="$ACPP_PREFIX" make build-sycl-acpp \
         SYCL_VARIANT="$ACPP_VARIANT" \
-        SYCL_TARGET="$GPU_BACKEND" \
-        SYCL_ARCH="$GPU_ARCH"
+        SYCL_TARGET="$ACPP_TARGET" \
+        SYCL_ARCH="$ACPP_ARCH"
 }
 
 build_dpcpp_backend() {
@@ -421,17 +444,24 @@ if [[ "$ACTION" == "fetch" ]]; then
     command -v git >/dev/null 2>&1 || { echo "ERROR: git is required for fetch mode" >&2; exit 127; }
     print_config
 
-    if [[ "$SITE" == "aurora" ]]; then
-        echo "Aurora uses the site DPC++ installation; there is no compiler source to fetch."
-        exit 0
-    fi
-
     case "$REQUESTED" in
-        acpp)  fetch_acpp_sources ;;
-        dpcpp) fetch_dpcpp_source ;;
+        acpp)
+            fetch_acpp_sources
+            ;;
+        dpcpp)
+            if [[ "$SITE" == "aurora" ]]; then
+                echo "Aurora uses the site DPC++ installation; there is no DPC++ source to fetch."
+            else
+                fetch_dpcpp_source
+            fi
+            ;;
         all)
             fetch_acpp_sources
-            fetch_dpcpp_source
+            if [[ "$SITE" == "aurora" ]]; then
+                echo "Aurora uses the site DPC++ installation; there is no DPC++ source to fetch."
+            else
+                fetch_dpcpp_source
+            fi
             ;;
     esac
 
@@ -450,8 +480,10 @@ case "$SITE" in
     aurora)  modules_aurora ;;
 esac
 
-if [[ "$SITE" != "aurora" ]]; then
+if [[ "$SITE" != "aurora" || "$REQUESTED" == "acpp" || "$REQUESTED" == "all" ]]; then
     configure_host_gcc
+fi
+if [[ "$SITE" != "aurora" ]]; then
     resolve_vendor_paths
 fi
 
@@ -473,7 +505,9 @@ case "$REQUESTED" in
         install_llvm_for_acpp
         install_acpp
         build_acpp_backend
-        install_dpcpp
+        if [[ "$SITE" != "aurora" ]]; then
+            install_dpcpp
+        fi
         build_dpcpp_backend
         ;;
 esac

@@ -29,6 +29,7 @@ For example, a shared cluster checkout can contain:
     sycl/build/acpp-polaris-a100/
     sycl/build/acpp-illyad-h100/
     sycl/build/acpp-odyssey-mi300a/
+    sycl/build/acpp-aurora-cpu/
     sycl/build/dpcpp-illyad-h100/
     sycl/build/dpcpp-odyssey-mi300a/
 
@@ -63,7 +64,16 @@ The cluster helper keeps compiler installs and work trees site-specific under
     ./sycl/setup-cluster-sycl.sh illyad build dpcpp
 
 Illyad targets its NVIDIA H100 with `sm_90`. Odyssey remains isolated under its
-own site directories even when both machines share the same filesystem.
+own site directories even when both machines share the same filesystem. On
+Aurora, DPC++ remains site-provided for PVC/XPU while AdaptiveCpp is built only
+for its OpenMP CPU backend:
+
+    ./sycl/setup-cluster-sycl.sh aurora fetch acpp
+    ./sycl/setup-cluster-sycl.sh aurora build acpp
+
+The Aurora AdaptiveCpp build uses LLVM's host CPU target only and forces CUDA,
+ROCm, OpenCL, Level Zero, and Vulkan runtime backends off. The resulting QuantOm
+variant is `acpp-aurora-cpu`.
 
 ## Install the SYCL toolchains
 
