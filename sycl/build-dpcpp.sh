@@ -21,6 +21,12 @@ fi
 VARIANT="$1"
 MODE="$2"
 ARCH="${3:-}"
+VJP_CASE="${QUANTOM_SYCL_VJP_CASE:-4}"
+COMPACT_CASE="${QUANTOM_SYCL_COMPACT_CASE:-4}"
+if ! [[ "$VJP_CASE" =~ ^[0-5]$ && "$COMPACT_CASE" =~ ^[0-5]$ ]]; then
+  echo "QUANTOM_SYCL_VJP_CASE and QUANTOM_SYCL_COMPACT_CASE must be integers in [0,5]" >&2
+  exit 2
+fi
 
 # A source-built DPC++ toolchain is used directly from its build directory,
 # matching Intel's current source-build documentation. Explicit per-mode
@@ -136,7 +142,9 @@ if [[ -n "$DPCPP_PREFIX" ]]; then
 fi
 
 "$CXX" \
-  -O3 -std=c++17 -DNDEBUG -DQUANTOM_SYCL_NATIVE=1 -fPIC -shared \
+  -O3 -std=c++17 -DNDEBUG -DQUANTOM_SYCL_NATIVE=1 \
+  -DQUANTOM_SYCL_VJP_CASE="$VJP_CASE" -DQUANTOM_SYCL_COMPACT_CASE="$COMPACT_CASE" \
+  -fPIC -shared \
   "${TARGET_FLAGS[@]}" \
   "${LIBSPIRV_FLAGS[@]}" \
   -I"$ROOT" \
@@ -150,16 +158,18 @@ fi
 rm -f "$BUILD"/quantom_loits_sycl_binding*.so "$BUILD"/bindings.o "$BUILD"/build.ninja "$BUILD"/lock
 (cd "$ROOT" && QUANTOM_SYCL_VARIANT="$VARIANT" python -m sycl.build)
 
-python - "$BUILD/variant.py" "dpcpp" "$MODE" "$TORCH_DEVICE" "$ARCH" <<'PY'
+python - "$BUILD/variant.py" "dpcpp" "$MODE" "$TORCH_DEVICE" "$ARCH" "$VJP_CASE" "$COMPACT_CASE" <<'PY'
 from pathlib import Path
 import sys
 
-path, toolchain, target, torch_device, architecture = sys.argv[1:]
+path, toolchain, target, torch_device, architecture, vjp_case, compact_case = sys.argv[1:]
 metadata = {
     "toolchain": toolchain,
     "target": target,
     "torch_device": torch_device,
     "architecture": architecture or None,
+    "vjp_case": int(vjp_case),
+    "compact_case": int(compact_case),
 }
 Path(path).write_text("METADATA = " + repr(metadata) + "\n")
 PY

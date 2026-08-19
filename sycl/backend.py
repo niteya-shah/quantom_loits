@@ -81,6 +81,14 @@ def configured_torch_device_mode():
     return _read_metadata()["torch_device"]
 
 
+def configured_vjp_case():
+    return int(_read_metadata().get("vjp_case", 4))
+
+
+def configured_compact_case():
+    return int(_read_metadata().get("compact_case", 4))
+
+
 def configured_torch_device():
     value = configured_torch_device_mode()
     if value == "auto":

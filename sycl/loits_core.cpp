@@ -9,6 +9,14 @@
 #include <cstdint>
 #include <stdexcept>
 
+#ifndef QUANTOM_SYCL_VJP_CASE
+#define QUANTOM_SYCL_VJP_CASE 4
+#endif
+
+#ifndef QUANTOM_SYCL_COMPACT_CASE
+#define QUANTOM_SYCL_COMPACT_CASE 4
+#endif
+
 namespace sycl_loits {
 
 namespace {
@@ -35,6 +43,34 @@ inline void decode_cell(int64_t global_cell,
   ix = cell / s.ny;
   iy = cell - ix * s.ny;
 }
+
+struct KernelTuning {
+  int team_size;
+  int items_per_lane;
+};
+
+constexpr KernelTuning kernel_tuning(int tuning_case) {
+  switch (tuning_case) {
+    case 0: return {1, 8};
+    case 1: return {8, 4};
+    case 2: return {16, 4};
+    case 3: return {32, 4};
+    case 4: return {64, 2};
+    case 5: return {128, 1};
+    default: return {0, 0};
+  }
+}
+
+constexpr KernelTuning kVjpTuning = kernel_tuning(QUANTOM_SYCL_VJP_CASE);
+constexpr KernelTuning kCompactTuning = kernel_tuning(QUANTOM_SYCL_COMPACT_CASE);
+static_assert(kVjpTuning.team_size > 0, "invalid QUANTOM_SYCL_VJP_CASE");
+static_assert(kCompactTuning.team_size > 0, "invalid QUANTOM_SYCL_COMPACT_CASE");
+static_assert((kVjpTuning.team_size & (kVjpTuning.team_size - 1)) == 0,
+              "SYCL VJP team size must be a power of two");
+static_assert((kCompactTuning.team_size & (kCompactTuning.team_size - 1)) == 0,
+              "SYCL compaction team size must be a power of two");
+static_assert(kVjpTuning.items_per_lane > 0, "SYCL VJP items per lane must be positive");
+static_assert(kCompactTuning.items_per_lane > 0, "SYCL compaction items per lane must be positive");
 
 }  // namespace
 
@@ -255,22 +291,24 @@ void interpolate_q(const double* QUANTOM_RESTRICT bins,
   });
 }
 
-int64_t compact(const double* QUANTOM_RESTRICT dense_x,
-                const double* QUANTOM_RESTRICT dense_q,
-                const int64_t* QUANTOM_RESTRICT counts,
-                int64_t nmax,
-                double* QUANTOM_RESTRICT events,
-                int64_t* QUANTOM_RESTRICT packed,
-                int64_t* QUANTOM_RESTRICT row_offsets,
-                const Shape& s) {
+namespace {
+
+template <int TEAM_SIZE, int ITEMS_PER_LANE>
+int64_t compact_specialized(const double* QUANTOM_RESTRICT dense_x,
+                            const double* QUANTOM_RESTRICT dense_q,
+                            const int64_t* QUANTOM_RESTRICT counts,
+                            int64_t nmax,
+                            double* QUANTOM_RESTRICT events,
+                            int64_t* QUANTOM_RESTRICT packed,
+                            int64_t* QUANTOM_RESTRICT row_offsets,
+                            const Shape& s) {
+  constexpr int64_t tile_size = static_cast<int64_t>(TEAM_SIZE) * ITEMS_PER_LANE;
   const int64_t global_cells = s.batch * s.cells;
-  auto& q = queue();
   const int64_t slots_per_batch = s.cells * nmax;
-  const size_t max_wg = q.get_device().get_info<sycl::info::device::max_work_group_size>();
-  const size_t wg = max_wg < 256 ? max_wg : 256;
+  auto& q = queue();
   const sycl::nd_range<1> launch{
-      sycl::range<1>(static_cast<size_t>(global_cells) * wg),
-      sycl::range<1>(wg)};
+      sycl::range<1>(static_cast<size_t>(global_cells) * TEAM_SIZE),
+      sycl::range<1>(TEAM_SIZE)};
 
   q.parallel_for(launch, [=](sycl::nd_item<1> item) {
     const int64_t global_cell = static_cast<int64_t>(item.get_group(0));
@@ -281,16 +319,25 @@ int64_t compact(const double* QUANTOM_RESTRICT dense_x,
     const int64_t count = counts[global_cell];
     int64_t valid_total = 0;
 
-    for (int64_t chunk = 0; chunk < count; chunk += static_cast<int64_t>(wg)) {
-      const int64_t slot = chunk + lane;
-      int64_t flag = 0;
-      if (slot < count) {
-        const int64_t p = base + slot;
-        const double xv = dense_x[p];
-        const double qv = dense_q[p];
-        flag = static_cast<int64_t>(sycl::isfinite(xv) && sycl::isfinite(qv) && xv * qv != 0.0);
+    for (int64_t tile = 0; tile < count; tile += tile_size) {
+      int64_t local_count = 0;
+#pragma unroll
+      for (int i = 0; i < ITEMS_PER_LANE; ++i) {
+        const int64_t slot = tile + lane * ITEMS_PER_LANE + i;
+        if (slot < count) {
+          const int64_t p = base + slot;
+          const double xv = dense_x[p];
+          const double qv = dense_q[p];
+          local_count += static_cast<int64_t>(
+              sycl::isfinite(xv) && sycl::isfinite(qv) && xv * qv != 0.0);
+        }
       }
-      valid_total += sycl::reduce_over_group(item.get_group(), flag, sycl::plus<int64_t>());
+      if constexpr (TEAM_SIZE == 1) {
+        valid_total += local_count;
+      } else {
+        valid_total += sycl::reduce_over_group(
+            item.get_group(), local_count, sycl::plus<int64_t>());
+      }
     }
 
     if (lane == 0) {
@@ -323,43 +370,76 @@ int64_t compact(const double* QUANTOM_RESTRICT dense_x,
       const int64_t cell = global_cell - b * s.cells;
       const int64_t base = b * slots_per_batch + cell * nmax;
       const int64_t count = counts[global_cell];
-      int64_t chunk_base = 0;
+      int64_t tile_base = 0;
 
-      for (int64_t chunk = 0; chunk < count; chunk += static_cast<int64_t>(wg)) {
-        const int64_t slot = chunk + lane;
-        int64_t flag = 0;
-        double xv = 0.0;
-        double qv = 0.0;
-        int64_t p = 0;
-        if (slot < count) {
-          p = base + slot;
-          xv = dense_x[p];
-          qv = dense_q[p];
-          flag = static_cast<int64_t>(sycl::isfinite(xv) && sycl::isfinite(qv) && xv * qv != 0.0);
+      for (int64_t tile = 0; tile < count; tile += tile_size) {
+        int64_t flags[ITEMS_PER_LANE] = {};
+        double x_values[ITEMS_PER_LANE] = {};
+        double q_values[ITEMS_PER_LANE] = {};
+        int64_t local_count = 0;
+
+#pragma unroll
+        for (int i = 0; i < ITEMS_PER_LANE; ++i) {
+          const int64_t slot = tile + lane * ITEMS_PER_LANE + i;
+          if (slot < count) {
+            const int64_t p = base + slot;
+            const double xv = dense_x[p];
+            const double qv = dense_q[p];
+            const int64_t flag = static_cast<int64_t>(
+                sycl::isfinite(xv) && sycl::isfinite(qv) && xv * qv != 0.0);
+            flags[i] = flag;
+            x_values[i] = xv;
+            q_values[i] = qv;
+            local_count += flag;
+          }
         }
 
-        const int64_t local_offset = sycl::exclusive_scan_over_group(
-            item.get_group(), flag, int64_t{0}, sycl::plus<int64_t>());
-        const int64_t chunk_valid = sycl::reduce_over_group(
-            item.get_group(), flag, sycl::plus<int64_t>());
-        if (flag) {
-          const int64_t row = row_offsets[global_cell] + chunk_base + local_offset;
-          events[row * 2] = xv;
-          events[row * 2 + 1] = qv;
-          packed[row] = p;
+        int64_t local_offset = 0;
+        int64_t tile_valid = local_count;
+        if constexpr (TEAM_SIZE > 1) {
+          local_offset = sycl::exclusive_scan_over_group(
+              item.get_group(), local_count, int64_t{0}, sycl::plus<int64_t>());
+          tile_valid = sycl::reduce_over_group(
+              item.get_group(), local_count, sycl::plus<int64_t>());
         }
-        chunk_base += chunk_valid;
+
+        int64_t local_rank = 0;
+#pragma unroll
+        for (int i = 0; i < ITEMS_PER_LANE; ++i) {
+          if (flags[i]) {
+            const int64_t slot = tile + lane * ITEMS_PER_LANE + i;
+            const int64_t p = base + slot;
+            const int64_t row = row_offsets[global_cell] + tile_base + local_offset + local_rank;
+            events[row * 2] = x_values[i];
+            events[row * 2 + 1] = q_values[i];
+            packed[row] = p;
+            ++local_rank;
+          }
+        }
+        tile_base += tile_valid;
       }
     });
   }
   return valid;
 }
 
+}  // namespace
+
+int64_t compact(const double* QUANTOM_RESTRICT dense_x,
+                const double* QUANTOM_RESTRICT dense_q,
+                const int64_t* QUANTOM_RESTRICT counts,
+                int64_t nmax,
+                double* QUANTOM_RESTRICT events,
+                int64_t* QUANTOM_RESTRICT packed,
+                int64_t* QUANTOM_RESTRICT row_offsets,
+                const Shape& s) {
+  return compact_specialized<kCompactTuning.team_size, kCompactTuning.items_per_lane>(
+      dense_x, dense_q, counts, nmax, events, packed, row_offsets, s);
+}
+
 namespace {
 
-constexpr size_t kInterpolationVjpWorkGroupSize = 256;
-
-template <int K, bool QAxis>
+template <int K, bool QAxis, int TEAM_SIZE, int ITEMS_PER_LANE>
 void interpolation_vjp_specialized(const double* QUANTOM_RESTRICT grad_events,
                                     const int64_t* QUANTOM_RESTRICT packed,
                                     const int64_t* QUANTOM_RESTRICT row_offsets,
@@ -369,50 +449,75 @@ void interpolation_vjp_specialized(const double* QUANTOM_RESTRICT grad_events,
                                     const int16_t* QUANTOM_RESTRICT indices,
                                     double* QUANTOM_RESTRICT grad_cdf,
                                     const Shape& s) {
-  constexpr size_t wg = kInterpolationVjpWorkGroupSize;
+  constexpr int64_t tile_size = static_cast<int64_t>(TEAM_SIZE) * ITEMS_PER_LANE;
   const int64_t global_cells = s.batch * s.cells;
   const int64_t bins_batch_stride = (QAxis ? s.ny : s.nx) * K;
   const int64_t cdf_batch_stride = s.nx * s.ny * K;
-  queue().parallel_for(
-      sycl::nd_range<1>{sycl::range<1>(static_cast<size_t>(global_cells) * wg), sycl::range<1>(wg)},
-      [=](sycl::nd_item<1> item) {
-        const int64_t global_cell = static_cast<int64_t>(item.get_group(0));
-        const int64_t lane = static_cast<int64_t>(item.get_local_id(0));
-        int64_t b, ix, iy;
-        decode_cell(global_cell, s, b, ix, iy);
-        const int64_t curve_index = QAxis ? ix * s.ny + iy : iy * s.nx + ix;
-        const int64_t bin_index = QAxis ? iy : ix;
-        const double* curve = cdf + b * cdf_batch_stride + curve_index * K;
-        const double* bin = bins + b * bins_batch_stride + bin_index * K;
-        double* gcurve = grad_cdf + b * cdf_batch_stride + curve_index * K;
-        const int64_t row_begin = row_offsets[global_cell];
-        const int64_t row_end = row_offsets[global_cell + 1];
-        double accum[K] = {};
+  auto& q = queue();
 
-        for (int64_t row = row_begin + lane; row < row_end; row += static_cast<int64_t>(wg)) {
-          const int64_t p = packed[row];
-          const int64_t j = indices[p];
-          const double c0 = curve[j];
-          const double inv_d = 1.0 / (curve[j + 1] - c0 + kEpsilon);
-          const double t = static_cast<double>(u[p]) - c0;
-          const double upstream =
-              grad_events[row * 2 + (QAxis ? 1 : 0)] * (bin[j + 1] - bin[j]);
-          const double left = upstream * (-inv_d + t * inv_d * inv_d);
-          const double right = -upstream * t * inv_d * inv_d;
+  q.submit([&](sycl::handler& cgh) {
+    sycl::local_accessor<double, 1> local(
+        sycl::range<1>(static_cast<size_t>(TEAM_SIZE) * K), cgh);
+    cgh.parallel_for(
+        sycl::nd_range<1>{
+            sycl::range<1>(static_cast<size_t>(global_cells) * TEAM_SIZE),
+            sycl::range<1>(TEAM_SIZE)},
+        [=](sycl::nd_item<1> item) {
+          const int64_t global_cell = static_cast<int64_t>(item.get_group(0));
+          const int64_t lane = static_cast<int64_t>(item.get_local_id(0));
+          const size_t local_base = static_cast<size_t>(lane) * K;
+          int64_t b, ix, iy;
+          decode_cell(global_cell, s, b, ix, iy);
+          const int64_t curve_index = QAxis ? ix * s.ny + iy : iy * s.nx + ix;
+          const int64_t bin_index = QAxis ? iy : ix;
+          const double* curve = cdf + b * cdf_batch_stride + curve_index * K;
+          const double* bin = bins + b * bins_batch_stride + bin_index * K;
+          double* gcurve = grad_cdf + b * cdf_batch_stride + curve_index * K;
+          const int64_t row_begin = row_offsets[global_cell];
+          const int64_t row_end = row_offsets[global_cell + 1];
+
 #pragma unroll
-          for (int slot = 0; slot < K; ++slot) {
-            if (j == slot) accum[slot] += left;
-            if (j + 1 == slot) accum[slot] += right;
+          for (int k = 0; k < K; ++k) local[local_base + k] = 0.0;
+
+          for (int64_t tile = row_begin; tile < row_end; tile += tile_size) {
+#pragma unroll
+            for (int i = 0; i < ITEMS_PER_LANE; ++i) {
+              const int64_t row = tile + lane + static_cast<int64_t>(i) * TEAM_SIZE;
+              if (row >= row_end) break;
+              const int64_t p = packed[row];
+              const int64_t j = indices[p];
+              const double c0 = curve[j];
+              const double inv_d = 1.0 / (curve[j + 1] - c0 + kEpsilon);
+              const double t = static_cast<double>(u[p]) - c0;
+              const double upstream =
+                  grad_events[row * 2 + (QAxis ? 1 : 0)] * (bin[j + 1] - bin[j]);
+              const double left = upstream * (-inv_d + t * inv_d * inv_d);
+              const double right = -upstream * t * inv_d * inv_d;
+              local[local_base + static_cast<size_t>(j)] += left;
+              local[local_base + static_cast<size_t>(j + 1)] += right;
+            }
           }
-        }
 
+          if constexpr (TEAM_SIZE > 1) {
+            item.barrier(sycl::access::fence_space::local_space);
+            for (int stride = TEAM_SIZE / 2; stride > 0; stride /= 2) {
+              if (lane < stride) {
+                const size_t other = static_cast<size_t>(lane + stride) * K;
 #pragma unroll
-        for (int slot = 0; slot < K; ++slot) {
-          const double total = sycl::reduce_over_group(
-              item.get_group(), accum[slot], sycl::plus<double>());
-          if (lane == 0) gcurve[slot] = total;
-        }
-      });
+                for (int k = 0; k < K; ++k) {
+                  local[local_base + k] += local[other + k];
+                }
+              }
+              item.barrier(sycl::access::fence_space::local_space);
+            }
+          }
+
+          if (lane == 0) {
+#pragma unroll
+            for (int k = 0; k < K; ++k) gcurve[k] = local[k];
+          }
+        });
+  });
 }
 
 template <bool QAxis>
@@ -428,22 +533,28 @@ void interpolation_vjp_dispatch(const double* QUANTOM_RESTRICT grad_events,
   const int64_t k = QAxis ? s.kq : s.kx;
   switch (k) {
     case 4:
-      return interpolation_vjp_specialized<4, QAxis>(
+      return interpolation_vjp_specialized<4, QAxis, kVjpTuning.team_size,
+                                           kVjpTuning.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 5:
-      return interpolation_vjp_specialized<5, QAxis>(
+      return interpolation_vjp_specialized<5, QAxis, kVjpTuning.team_size,
+                                           kVjpTuning.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 8:
-      return interpolation_vjp_specialized<8, QAxis>(
+      return interpolation_vjp_specialized<8, QAxis, kVjpTuning.team_size,
+                                           kVjpTuning.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 10:
-      return interpolation_vjp_specialized<10, QAxis>(
+      return interpolation_vjp_specialized<10, QAxis, kVjpTuning.team_size,
+                                            kVjpTuning.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 16:
-      return interpolation_vjp_specialized<16, QAxis>(
+      return interpolation_vjp_specialized<16, QAxis, kVjpTuning.team_size,
+                                            kVjpTuning.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 32:
-      return interpolation_vjp_specialized<32, QAxis>(
+      return interpolation_vjp_specialized<32, QAxis, kVjpTuning.team_size,
+                                            kVjpTuning.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     default:
       throw std::runtime_error("unsupported interpolation VJP K");

@@ -9,6 +9,7 @@ def test_profiler_records_training_and_loits_regions():
         n_events=20,
         grid_size=3,
         compile=False,
+        profile_regions=True,
     )
     hooks = RegionHooks(trainer.sampler.impl)
     profiler = TrainingProfiler("cpu")

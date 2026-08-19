@@ -9,9 +9,12 @@ WARMUP ?= 5
 ITERATIONS ?= 10
 SEED ?= 0
 SITE ?=
+EXPERIMENT ?= fixed
 SYCL_VARIANT ?=
 SYCL_TARGET ?=
 SYCL_ARCH ?=
+SYCL_VJP_CASE ?= 4
+SYCL_COMPACT_CASE ?= 4
 LLVM_PREFIX ?=
 LLVM_TARGETS ?=
 LLVM_VERSION ?=
@@ -80,10 +83,10 @@ build-sycl-acpp:
 	@test -n "$(SYCL_TARGET)" || { echo "SYCL_TARGET is required" >&2; exit 2; }
 	@if [[ "$(SYCL_TARGET)" == "cuda" || "$(SYCL_TARGET)" == "hip" ]]; then \
 		test -n "$(SYCL_ARCH)" || { echo "SYCL_ARCH is required for $(SYCL_TARGET)" >&2; exit 2; }; \
-		./sycl/build-acpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)" "$(SYCL_ARCH)"; \
+		QUANTOM_SYCL_VJP_CASE="$(SYCL_VJP_CASE)" QUANTOM_SYCL_COMPACT_CASE="$(SYCL_COMPACT_CASE)" ./sycl/build-acpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)" "$(SYCL_ARCH)"; \
 	else \
 		test -z "$(SYCL_ARCH)" || { echo "SYCL_ARCH is only valid for cuda/hip targets" >&2; exit 2; }; \
-		./sycl/build-acpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)"; \
+		QUANTOM_SYCL_VJP_CASE="$(SYCL_VJP_CASE)" QUANTOM_SYCL_COMPACT_CASE="$(SYCL_COMPACT_CASE)" ./sycl/build-acpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)"; \
 	fi
 
 build-sycl-dpcpp:
@@ -91,10 +94,10 @@ build-sycl-dpcpp:
 	@test -n "$(SYCL_TARGET)" || { echo "SYCL_TARGET is required" >&2; exit 2; }
 	@if [[ "$(SYCL_TARGET)" == "cuda" || "$(SYCL_TARGET)" == "hip" ]]; then \
 		test -n "$(SYCL_ARCH)" || { echo "SYCL_ARCH is required for $(SYCL_TARGET)" >&2; exit 2; }; \
-		./sycl/build-dpcpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)" "$(SYCL_ARCH)"; \
+		QUANTOM_SYCL_VJP_CASE="$(SYCL_VJP_CASE)" QUANTOM_SYCL_COMPACT_CASE="$(SYCL_COMPACT_CASE)" ./sycl/build-dpcpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)" "$(SYCL_ARCH)"; \
 	else \
 		test -z "$(SYCL_ARCH)" || { echo "SYCL_ARCH is only valid for cuda/hip targets" >&2; exit 2; }; \
-		./sycl/build-dpcpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)"; \
+		QUANTOM_SYCL_VJP_CASE="$(SYCL_VJP_CASE)" QUANTOM_SYCL_COMPACT_CASE="$(SYCL_COMPACT_CASE)" ./sycl/build-dpcpp.sh "$(SYCL_VARIANT)" "$(SYCL_TARGET)"; \
 	fi
 
 rebuild-sycl-binding:
@@ -138,7 +141,8 @@ benchmark:
 		--warmup $(WARMUP) \
 		--iterations $(ITERATIONS) \
 		--seed $(SEED) \
-		--site "$(SITE)"
+		--site "$(SITE)" \
+		--experiment "$(EXPERIMENT)"
 
 profile:
 	$(PYTHON) benchmark_training.py \
@@ -150,6 +154,7 @@ profile:
 		--iterations $(ITERATIONS) \
 		--seed $(SEED) \
 		--site "$(SITE)" \
+		--experiment "$(EXPERIMENT)" \
 		--regions \
 		--trace
 

@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import torch
 from torch import nn
 from torch.profiler import record_function
@@ -36,6 +38,7 @@ class GANTrainer:
         self.backend = backend
         self.device = torch.device(device)
         self.n_events = n_events
+        self.profile_regions = profile_regions
         theory_config = {
             "n_points_x": grid_size,
             "n_points_y": grid_size,
@@ -90,8 +93,11 @@ class GANTrainer:
         logits = self.discriminator(fake)
         return self.loss(logits, torch.ones_like(logits))
 
+    def _region(self, name):
+        return record_function(name) if self.profile_regions else nullcontext()
+
     def step(self):
-        with record_function("gan::discriminator_step"):
+        with self._region("gan::discriminator_step"):
             self.d_optimizer.zero_grad(set_to_none=True)
             with torch.no_grad():
                 fake = self.generate(self.params)
@@ -99,7 +105,7 @@ class GANTrainer:
             d_loss.backward()
             self.d_optimizer.step()
 
-        with record_function("gan::generator_step"):
+        with self._region("gan::generator_step"):
             self.g_optimizer.zero_grad(set_to_none=True)
             g_loss = self.generator_loss(self.params)
             grad = torch.autograd.grad(g_loss, self.params)[0]

@@ -357,6 +357,8 @@ print_config() {
     echo "requested:           $REQUESTED"
     echo "backend:             $GPU_BACKEND"
     [[ -z "$GPU_ARCH" ]] || echo "architecture:        $GPU_ARCH"
+    echo "VJP tuning case:     ${QUANTOM_SYCL_VJP_CASE:-4}"
+    echo "compact tuning case: ${QUANTOM_SYCL_COMPACT_CASE:-4}"
     echo "toolchain root:      $TOOLCHAIN_ROOT"
     echo "source root:         $TOOLCHAIN_SOURCE_ROOT"
     echo "work root:           $TOOLCHAIN_WORK_ROOT"
@@ -443,7 +445,9 @@ build_acpp_backend() {
     ACPP_PREFIX="$ACPP_PREFIX" LLVM_PREFIX="$LLVM_PREFIX" make build-sycl-acpp \
         SYCL_VARIANT="$ACPP_VARIANT" \
         SYCL_TARGET="$ACPP_TARGET" \
-        SYCL_ARCH="$ACPP_ARCH"
+        SYCL_ARCH="$ACPP_ARCH" \
+        SYCL_VJP_CASE="${QUANTOM_SYCL_VJP_CASE:-4}" \
+        SYCL_COMPACT_CASE="${QUANTOM_SYCL_COMPACT_CASE:-4}"
 }
 
 build_dpcpp_backend() {
@@ -455,12 +459,17 @@ build_dpcpp_backend() {
             echo "ERROR: Aurora DPC++ compiler not found; update modules_aurora()." >&2
             exit 127
         fi
-        make build-sycl-dpcpp SYCL_VARIANT="$DPCPP_VARIANT" SYCL_TARGET=xpu
+        make build-sycl-dpcpp \
+            SYCL_VARIANT="$DPCPP_VARIANT" SYCL_TARGET=xpu \
+            SYCL_VJP_CASE="${QUANTOM_SYCL_VJP_CASE:-4}" \
+            SYCL_COMPACT_CASE="${QUANTOM_SYCL_COMPACT_CASE:-4}"
     else
         DPCPP_PREFIX="$DPCPP_PREFIX" make build-sycl-dpcpp \
             SYCL_VARIANT="$DPCPP_VARIANT" \
             SYCL_TARGET="$GPU_BACKEND" \
-            SYCL_ARCH="$GPU_ARCH"
+            SYCL_ARCH="$GPU_ARCH" \
+            SYCL_VJP_CASE="${QUANTOM_SYCL_VJP_CASE:-4}" \
+            SYCL_COMPACT_CASE="${QUANTOM_SYCL_COMPACT_CASE:-4}"
     fi
 }
 

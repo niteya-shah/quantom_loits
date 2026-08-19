@@ -12,12 +12,12 @@ def safe_component(value):
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value)).strip("-") or "run"
 
 
-def implementation_name(backend):
+def implementation_metadata(backend):
     if backend != "sycl":
-        return backend
-    from sycl.backend import selected_variant
+        return backend, "", ""
+    from sycl.backend import configured_compact_case, configured_vjp_case, selected_variant
 
-    return selected_variant()
+    return selected_variant(), configured_vjp_case(), configured_compact_case()
 
 
 def native_threads(backend, device):
@@ -29,6 +29,45 @@ def native_threads(backend, device):
     if backend == "openmp":
         return os.environ.get("OMP_NUM_THREADS", "")
     return ""
+
+
+def result_directory(args, backend, vjp_case, compact_case):
+    directory = Path(args.output) / safe_component(args.site) / safe_component(args.experiment)
+    if args.experiment == "tuning" and backend == "sycl":
+        directory /= f"vjp{vjp_case}-compact{compact_case}"
+    return directory
+
+
+def result_stem(kind, implementation, device, events, threads=""):
+    return "_".join(
+        part
+        for part in [
+            kind,
+            safe_component(implementation),
+            safe_component(str(device).replace(":", "-")),
+            f"e{events}",
+            f"t{threads}" if threads else "",
+        ]
+        if part
+    )
+
+
+def row_metadata(args, implementation, threads, vjp_case, compact_case):
+    return {
+        "site": args.site,
+        "experiment": args.experiment,
+        "backend": args.backend,
+        "implementation": implementation,
+        "device": str(args.device),
+        "events": args.events,
+        "threads": threads,
+        "grid_size": args.grid_size,
+        "warmup": args.warmup,
+        "iterations": args.iterations,
+        "seed": args.seed,
+        "vjp_case": vjp_case,
+        "compact_case": compact_case,
+    }
 
 
 def run(args, profile_regions=False):
@@ -44,34 +83,27 @@ def run(args, profile_regions=False):
     hooks = None
     if profile_regions and args.backend == "torch":
         hooks = RegionHooks(trainer.sampler.impl)
-    profiler = TrainingProfiler(args.device)
-    suffix = "regions" if profile_regions else "training"
-    implementation = implementation_name(args.backend)
+
+    implementation, vjp_case, compact_case = implementation_metadata(args.backend)
     threads = native_threads(args.backend, args.device)
-    site = safe_component(args.site) if args.backend == "torch" and args.site else ""
-    stem = "_".join(
-        part
-        for part in [
-            suffix,
-            safe_component(implementation),
-            site,
-            safe_component(args.device.replace(":", "-")),
-            str(args.events),
-            f"t{threads}" if threads else "",
-        ]
-        if part
-    )
-    trace = Path(args.output) / f"{stem}.json" if args.trace else None
-    prof = profiler.run(trainer, args.warmup, args.iterations, trace)
-    rows = profiler.rows(
-        prof,
-        args.backend,
-        args.device,
-        args.events,
-        implementation=implementation,
-        threads=threads,
-    )
-    profiler.write_csv(Path(args.output) / f"{stem}.csv", rows)
+    metadata = row_metadata(args, implementation, threads, vjp_case, compact_case)
+    output = result_directory(args, args.backend, vjp_case, compact_case)
+    output.mkdir(parents=True, exist_ok=True)
+    profiler = TrainingProfiler(args.device)
+
+    if profile_regions:
+        stem = result_stem("regions", implementation, args.device, args.events, threads)
+        trace = None
+        if args.trace:
+            trace = output / f"{result_stem('trace', implementation, args.device, args.events, threads)}.json"
+        prof = profiler.run(trainer, args.warmup, args.iterations, trace)
+        rows = profiler.rows(prof, metadata)
+    else:
+        stem = result_stem("training", implementation, args.device, args.events, threads)
+        samples = profiler.measure(trainer, args.warmup, args.iterations)
+        rows = profiler.timing_rows(samples, metadata)
+
+    profiler.write_csv(output / f"{stem}.csv", rows)
     if hooks:
         hooks.close()
 
@@ -95,6 +127,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", default="results/training")
     parser.add_argument("--site", default=os.environ.get("QUANTOM_SITE", ""))
+    parser.add_argument("--experiment", default="fixed", choices=("fixed", "strong", "weak", "tuning"))
     parser.add_argument("--regions", action="store_true")
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--list-backends", action="store_true")
@@ -108,6 +141,9 @@ def main():
     if args.list_backends:
         print_backends(args.device)
         return
+
+    if not args.site:
+        parser.error("--site is required for benchmark output (or set QUANTOM_SITE)")
 
     ok, reason = backend_status(args.backend, args.device)
     if not ok:

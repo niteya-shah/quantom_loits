@@ -71,13 +71,13 @@ def manual_outputs(device):
     return x_bins, xsec_x, q_bins, xsec_q, weights, acceptance
 
 
-def make_theory(device, grid=3):
+def make_theory(device, grid=3, k=5):
     return TorchProxyTheoryLite(
         {
             "n_points_x": grid,
             "n_points_y": grid,
-            "n_cdf_points_x": 5,
-            "n_cdf_points_y": 5,
+            "n_cdf_points_x": k,
+            "n_cdf_points_y": k,
             "average": False,
         },
         str(device),
@@ -184,16 +184,17 @@ def test_sycl_torch_kernel_after_native_call():
     torch.testing.assert_close(probe.cpu(), expected, rtol=0.0, atol=0.0)
 
 
-def test_sycl_forward_and_reverse_vjp_match_torch_for_same_samples():
+@pytest.mark.parametrize("k", [4, 5, 8, 10, 16, 32])
+def test_sycl_forward_and_reverse_vjp_match_torch_for_same_samples(k):
     device = sycl_device()
-    theory = make_theory(device)
+    theory = make_theory(device, k=k)
     params = make_params(device)
     outputs = theory(params)
     x_bins, xsec_x, q2_bins, xsec_q2, weights, acceptance = outputs[:6]
 
-    state = native_state(outputs)
+    state = native_state(outputs, n_events=257)
     events, norm_x, norm_q, cdf_x, cdf_q, u_x, u_q, interval_x, interval_q, packed, row_offsets = state
-    reference = torch_with_samples(outputs, 80, u_x, u_q)
+    reference = torch_with_samples(outputs, 257, u_x, u_q)
     torch.testing.assert_close(events, reference, rtol=2e-10, atol=2e-11)
 
     upstream = torch.randn_like(events)
@@ -268,7 +269,7 @@ def test_sycl_region_profiler():
     assert "loits::backward::cdf_x" in names
     assert "loits::backward::rho_x" in names
 
-    rows = profiler.rows(prof, "sycl", str(device), 30)
+    rows = profiler.rows(prof, {"site": "test", "experiment": "fixed", "backend": "sycl", "implementation": "test-sycl", "device": str(device), "events": 30, "threads": "", "grid_size": 3, "warmup": 0, "iterations": 1, "seed": 0, "vjp_case": 4, "compact_case": 4})
     forward = next(row for row in rows if row["region"] == "loits::forward")
     random_x = next(row for row in rows if row["region"] == "loits::forward::random_x")
     assert random_x["parent_event_id"] == forward["event_id"]

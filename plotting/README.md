@@ -1,57 +1,40 @@
 # Plotting
 
-The plotting tools intentionally use the same presentation style as the original
-QuantOm artifact: clustered/stacked **bar plots**, hatching for event counts,
-and log-scaled execution-time panels where appropriate. There are no boxplots or
-median/IQR plots.
+The plotting tools use clustered/stacked bar plots, hatching for event counts,
+and log-scaled execution-time panels where appropriate. Timing bars use mean ±
+one sample standard deviation.
 
-All timing bars use **mean ± one sample standard deviation** error bars.
+Benchmark results use one canonical tree:
 
-The new differentiable benchmark is represented directly in the old style:
+    results/training/<site>/<experiment>/
+        training_<implementation>_<device>_e<events>[_t<threads>].csv
+        regions_<implementation>_<device>_e<events>[_t<threads>].csv
+        trace_<implementation>_<device>_e<events>[_t<threads>].json
 
-- the top CPU/GPU panel is the percentage of LOITS runtime spent in each
-  component;
-- forward stages are labelled `F:` and reverse-mode stages are labelled `B:`;
-- the two forward sampler calls and one backward call in each GAN iteration are
-  accumulated together before the component percentages are computed;
-- the bottom CPU/GPU panel is the unprofiled end-to-end GAN iteration time with
-  standard-deviation error bars.
+where `<experiment>` is `fixed`, `strong`, `weak`, or `tuning`. SYCL tuning
+runs add one directory level, for example `tuning/vjp4-compact2/`, so different
+compile-time tuning cases cannot overwrite one another.
 
-The component plots use semantic leaf regions only, so nested profiler parents
-are never double-counted. PyTorch-only flatten regions are included when they
-exist; native backends simply contribute zero to those components.
+Every CSV row records the site, experiment, backend, implementation, device,
+event count, thread count, grid size, warmup count, measured iteration count,
+seed, and the selected SYCL VJP/compaction cases. Plotting uses those columns as
+the source of truth rather than recovering metadata from filenames.
 
-## Generate plots
+`training_*.csv` contains synchronized wall-clock GAN-iteration timings and is
+not collected under `torch.profiler`. `regions_*.csv` is collected separately
+with the profiler and is used only for the LOITS component breakdown.
 
-The normal interface is just:
+The fixed-resource top panel is the percentage of LOITS forward+backward time in
+each semantic stage. The lower panel is unprofiled end-to-end GAN iteration
+time. Strong and weak scaling also use the unprofiled wall-clock timings.
+
+Generate all available plots with:
 
     make plots
 
-or:
+Outputs are organized as:
 
-    python -m plotting.plot_all
-
-This reads `results/training/` and writes, when enough data exists:
-
-    results/plots/cpu_scaling.pdf
-    results/plots/gpu_scaling.pdf
-    results/plots/strong_scaling.pdf
-    results/plots/weak_scaling.pdf
-
-CPU/GPU plots require the normal benchmark CSV and the detailed `--regions`
-CSV for the same configurations. `benchmark_training.py --regions` already
-produces both.
-
-Strong scaling is generated automatically when multiple explicit OpenMP thread
-counts exist for the same event count and a serial C++ result exists. Weak
-scaling is generated when the results contain at least two thread counts with a
-constant events-per-thread workload. Missing plots are skipped by `plot_all`.
-
-The fixed-resource CPU/GPU plots intentionally ignore event sizes that exist only
-in strong- or weak-scaling runs. Only event counts with complete training and
-region data for every selected fixed-resource implementation are shown. This
-keeps all experiment families in one shared results directory without mixing
-their x-axis groups or hatch legends.
-
-No backend is required. The scripts plot only the result series present in the
-shared results directory, including explicitly named SYCL variants.
+    results/plots/gpu/fixed.pdf
+    results/plots/<cpu-site>/fixed.pdf
+    results/plots/<cpu-site>/strong.pdf
+    results/plots/<cpu-site>/weak.pdf

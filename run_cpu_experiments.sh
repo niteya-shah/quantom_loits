@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run from inside an allocated Instinct compute node/job.
+# Run from inside an allocated CPU compute node/job.
 # By default all physical CPU cores visible to the allocation are used.
 # Override the maximum explicitly with, for example:
 #   NTHREADS=64 ./run_cpu_experiments.sh
 
-SITE="${SITE:-instinct}"
+SITE="${SITE:?Set SITE explicitly, e.g. SITE=instinct or SITE=pinwheel}"
 GRID="${GRID:-100}"
 WARMUP="${WARMUP:-5}"
 ITERS="${ITERS:-20}"
@@ -16,11 +16,11 @@ STRONG_EVENTS="${STRONG_EVENTS:-100000}"
 EVENTS_PER_THREAD="${EVENTS_PER_THREAD:-10000}"
 read -r -a FIXED_EVENTS <<< "${FIXED_EVENTS:-10000 100000 1000000 10000000}"
 
-ACPP_VARIANT="${ACPP_VARIANT:-acpp-instinct-cpu}"
-DPCPP_VARIANT="${DPCPP_VARIANT:-dpcpp-instinct-cpu}"
+ACPP_VARIANT="${ACPP_VARIANT:-acpp-${SITE}-cpu}"
+DPCPP_VARIANT="${DPCPP_VARIANT:-dpcpp-${SITE}-cpu}"
 
-OUTPUT="${OUTPUT:-results/training/${SITE}-cpu}"
-PLOTS="${PLOTS:-results/plots/${SITE}-cpu}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-results/training}"
+PLOTS="${PLOTS:-results/plots/${SITE}}"
 
 command -v taskset >/dev/null 2>&1 || {
     echo "ERROR: taskset is required for CPU scaling affinity." >&2
@@ -94,7 +94,7 @@ cpu_list_for_threads() {
 for variant in "$ACPP_VARIANT" "$DPCPP_VARIANT"; do
     if [[ ! -f "sycl/build/$variant/variant.py" || ! -f "sycl/build/$variant/libquantom_loits_sycl.so" ]]; then
         echo "ERROR: SYCL variant '$variant' is not built." >&2
-        echo "Build the Instinct CPU toolchains/backends before running this script." >&2
+        echo "Build the CPU SYCL toolchains/backends for this site before running this script." >&2
         exit 2
     fi
 done
@@ -104,10 +104,10 @@ export OMP_PROC_BIND=close
 export OMP_DYNAMIC=FALSE
 export QUANTOM_SITE="$SITE"
 
-mkdir -p "$OUTPUT" "$PLOTS"
+mkdir -p "$OUTPUT_ROOT" "$PLOTS"
 
 echo "============================================================"
-echo "Instinct CPU scaling study"
+echo "$SITE CPU scaling study"
 echo "Physical cores visible: $AVAILABLE_CORES"
 echo "Maximum cores used:      $NTHREADS"
 echo "Scaling points:          ${THREADS[*]}"
@@ -126,16 +126,17 @@ run_benchmark() {
     local backend="$1"
     local events="$2"
     local threads="$3"
-    local variant="${4:-}"
+    local experiment="$4"
+    local variant="${5:-}"
     local cpus
     cpus="$(cpu_list_for_threads "$threads")"
 
     echo
     echo "------------------------------------------------------------"
     if [[ -n "$variant" ]]; then
-        echo "backend=$backend variant=$variant events=$events cores=$threads cpus=$cpus"
+        echo "experiment=$experiment backend=$backend variant=$variant events=$events cores=$threads cpus=$cpus"
     else
-        echo "backend=$backend events=$events cores=$threads cpus=$cpus"
+        echo "experiment=$experiment backend=$backend events=$events cores=$threads cpus=$cpus"
     fi
     echo "------------------------------------------------------------"
 
@@ -161,6 +162,11 @@ run_benchmark() {
         )
     fi
 
+    local region_args=()
+    if [[ "$experiment" == "fixed" ]]; then
+        region_args+=(--regions)
+    fi
+
     taskset -c "$cpus" \
         env "${env_args[@]}" \
         python benchmark_training.py \
@@ -172,18 +178,20 @@ run_benchmark() {
             --iterations "$ITERS" \
             --seed "$SEED" \
             --site "$SITE" \
-            --output "$OUTPUT" \
-            --regions
+            --experiment "$experiment" \
+            --output "$OUTPUT_ROOT" \
+            "${region_args[@]}"
 }
 
 run_parallel_backends() {
     local events="$1"
     local threads="$2"
+    local experiment="$3"
 
-    run_benchmark openmp "$events" "$threads"
-    run_benchmark torch "$events" "$threads"
-    run_benchmark sycl "$events" "$threads" "$ACPP_VARIANT"
-    run_benchmark sycl "$events" "$threads" "$DPCPP_VARIANT"
+    run_benchmark openmp "$events" "$threads" "$experiment"
+    run_benchmark torch "$events" "$threads" "$experiment"
+    run_benchmark sycl "$events" "$threads" "$experiment" "$ACPP_VARIANT"
+    run_benchmark sycl "$events" "$threads" "$experiment" "$DPCPP_VARIANT"
 }
 
 echo
@@ -192,8 +200,8 @@ echo "1. Fixed-resource scaling"
 echo "============================================================"
 
 for events in "${FIXED_EVENTS[@]}"; do
-    run_benchmark cpp "$events" "$NTHREADS"
-    run_parallel_backends "$events" "$NTHREADS"
+    run_benchmark cpp "$events" "$NTHREADS" fixed
+    run_parallel_backends "$events" "$NTHREADS" fixed
 done
 
 echo
@@ -202,8 +210,9 @@ echo "2. Strong scaling"
 echo "   Fixed workload: $STRONG_EVENTS events"
 echo "============================================================"
 
+run_benchmark cpp "$STRONG_EVENTS" 1 strong
 for threads in "${THREADS[@]}"; do
-    run_parallel_backends "$STRONG_EVENTS" "$threads"
+    run_parallel_backends "$STRONG_EVENTS" "$threads" strong
 done
 
 echo
@@ -214,7 +223,7 @@ echo "============================================================"
 
 for threads in "${THREADS[@]}"; do
     events=$((threads * EVENTS_PER_THREAD))
-    run_parallel_backends "$events" "$threads"
+    run_parallel_backends "$events" "$threads" weak
 done
 
 echo
@@ -224,19 +233,20 @@ echo "============================================================"
 
 python - <<PY
 from plotting.plot_ss import generate
-assert generate("$OUTPUT", "$PLOTS/strong_scaling.pdf")
+assert generate("$OUTPUT_ROOT", "$PLOTS/strong.pdf", site="$SITE")
 PY
 
 python - <<PY
 from plotting.plot_ws import generate
-assert generate("$OUTPUT", "$PLOTS/weak_scaling.pdf")
+assert generate("$OUTPUT_ROOT", "$PLOTS/weak.pdf", site="$SITE")
 PY
 
-python -m plotting.plot_fixed_resource \
-    --input "$OUTPUT" \
-    --output "$PLOTS/cpu_scaling.pdf"
+python - <<PY
+from plotting.plot_fixed_resource import generate
+assert generate(["$OUTPUT_ROOT"], "$PLOTS/fixed.pdf", cpu=True, site="$SITE")
+PY
 
 echo
 echo "Done."
-echo "Results: $OUTPUT/"
+echo "Results: $OUTPUT_ROOT/$SITE/{fixed,strong,weak}/"
 echo "Plots:   $PLOTS/"

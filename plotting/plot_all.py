@@ -2,9 +2,10 @@
 import argparse
 from pathlib import Path
 
-from plotting.plot_fixed_resource import generate as generate_fixed_resource
-from plotting.plot_ss import generate as generate_ss
-from plotting.plot_ws import generate as generate_ws
+from plotting.common import available_sites, load_rows
+from plotting.plot_fixed_resource import generate as generate_fixed
+from plotting.plot_ss import generate as generate_strong
+from plotting.plot_ws import generate as generate_weak
 
 
 def main():
@@ -13,19 +14,21 @@ def main():
     parser.add_argument("--output", default="results/plots")
     args = parser.parse_args()
 
+    rows = load_rows([args.input])
     output = Path(args.output)
-    output.mkdir(parents=True, exist_ok=True)
-
     made = 0
-    made += int(generate_fixed_resource([args.input], output / "cpu_scaling.pdf", cpu=True))
-    made += int(generate_fixed_resource([args.input], output / "gpu_scaling.pdf", cpu=False))
-    made += int(generate_ss(args.input, output / "strong_scaling.pdf"))
-    made += int(generate_ws(args.input, output / "weak_scaling.pdf"))
+
+    if any(row.get("device") != "cpu" for row in rows):
+        made += int(generate_fixed([args.input], output / "gpu" / "fixed.pdf", cpu=False))
+
+    for site in available_sites(rows, cpu=True):
+        site_output = output / site
+        made += int(generate_fixed([args.input], site_output / "fixed.pdf", cpu=True, site=site))
+        made += int(generate_strong(args.input, site_output / "strong.pdf", site=site))
+        made += int(generate_weak(args.input, site_output / "weak.pdf", site=site))
 
     if not made:
-        raise SystemExit(
-            "no standard plots could be generated; run benchmarks with --regions so both training_*.csv and regions_*.csv exist"
-        )
+        raise SystemExit("no standard plots could be generated from the canonical result tree")
 
 
 if __name__ == "__main__":

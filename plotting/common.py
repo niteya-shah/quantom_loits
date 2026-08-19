@@ -33,7 +33,6 @@ BACKWARD_STAGES = [
 ]
 
 STAGES = FORWARD_STAGES + BACKWARD_STAGES
-
 EVENT_HATCHES = ("", "////", "+++", "..", "\\\\", "xx", "oo", "**")
 
 
@@ -50,15 +49,26 @@ def csv_paths(inputs):
 
 def load_rows(inputs):
     rows = []
+    integer_fields = ("events", "grid_size", "warmup", "iterations", "seed", "vjp_case", "compact_case")
+    float_fields = (
+        "wall_ms",
+        "cpu_ms",
+        "device_ms",
+        "self_cpu_ms",
+        "self_device_ms",
+        "start_us",
+        "end_us",
+    )
     for path in csv_paths(inputs):
         with path.open(newline="") as handle:
             for row in csv.DictReader(handle):
                 row["_path"] = str(path)
-                if row.get("events"):
-                    row["events"] = int(row["events"])
+                for key in integer_fields:
+                    if row.get(key) not in (None, ""):
+                        row[key] = int(row[key])
                 if row.get("occurrence") not in (None, ""):
                     row["occurrence"] = int(row["occurrence"])
-                for key in ("cpu_ms", "device_ms", "self_cpu_ms", "self_device_ms"):
+                for key in float_fields:
                     if row.get(key) not in (None, ""):
                         row[key] = float(row[key])
                 rows.append(row)
@@ -91,17 +101,36 @@ def is_regions_file(row):
     return Path(row.get("_path", "")).name.startswith("regions_")
 
 
+def rows_for_experiment(rows, experiment):
+    return [row for row in rows if row.get("experiment") == experiment]
+
+
+def rows_for_site(rows, site):
+    return [row for row in rows if row.get("site") == site]
+
+
+def available_sites(rows, *, cpu=None, experiment=None):
+    subset = rows
+    if experiment is not None:
+        subset = rows_for_experiment(subset, experiment)
+    if cpu is not None:
+        subset = rows_for_device(subset, cpu)
+    return sorted({row.get("site", "") for row in subset if row.get("site")})
+
+
 def series_key(row, include_threads=True):
+    backend = row.get("backend", "")
     return (
-        row.get("backend", ""),
-        row.get("implementation") or row.get("backend", "unknown"),
+        row.get("site", ""),
+        backend,
+        row.get("implementation") or backend or "unknown",
         row.get("device", ""),
         row.get("threads", "") if include_threads else "",
     )
 
 
 def series_label(key, show_threads=True):
-    backend, implementation, device, threads = key
+    site, backend, implementation, device, threads = key
     if backend == "cpp":
         label = "C++"
     elif backend == "openmp":
@@ -109,6 +138,8 @@ def series_label(key, show_threads=True):
     elif backend == "torch":
         dev = {"cpu": "CPU", "cuda": "CUDA", "xpu": "XPU"}.get(device, device.upper())
         label = f"PyTorch\n({dev})"
+        if device != "cpu" and site:
+            label += f"\n{site}"
     elif backend == "sycl":
         label = f"SYCL\n{implementation}"
     else:
@@ -138,12 +169,50 @@ def _event_maps(rows):
     by_id = {}
     for row in rows:
         event_id = str(row.get("event_id") or "")
-        if event_id:
-            by_id[(row.get("_path", ""), event_id)] = row
+        if not event_id:
+            continue
+        key = (row.get("_path", ""), event_id)
+        current = by_id.get(key)
+        if current is None or (
+            not current.get("parent_event_id") and row.get("parent_event_id")
+        ):
+            by_id[key] = row
     return by_id
 
 
-def training_root(row, by_id):
+def _training_intervals(rows):
+    intervals = defaultdict(list)
+    for row in rows:
+        if row.get("region") != "gan::training_iteration":
+            continue
+        start = row.get("start_us")
+        end = row.get("end_us")
+        if start in (None, "") or end in (None, ""):
+            continue
+        root = (
+            row.get("_path", ""),
+            str(row.get("event_id") or row.get("occurrence") or "0"),
+        )
+        intervals[row.get("_path", "")].append((float(start), float(end), root))
+    return intervals
+
+
+def _enclosing_training_root(row, intervals):
+    start = row.get("start_us")
+    end = row.get("end_us")
+    if start in (None, "") or end in (None, ""):
+        return None
+    candidates = [
+        interval
+        for interval in intervals.get(row.get("_path", ""), ())
+        if interval[0] <= float(start) and float(end) <= interval[1]
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda interval: interval[1] - interval[0])[2]
+
+
+def training_root(row, by_id, intervals=None):
     if row.get("region") == "gan::training_iteration":
         return (row.get("_path", ""), str(row.get("event_id") or row.get("occurrence") or "0"))
 
@@ -152,42 +221,39 @@ def training_root(row, by_id):
     while current is not None:
         parent_id = str(current.get("parent_event_id") or "")
         if not parent_id:
-            return None
+            break
         key = (current.get("_path", ""), parent_id)
         if key in visited:
-            return None
+            break
         visited.add(key)
         parent = by_id.get(key)
         if parent is None:
-            return None
+            break
         if parent.get("region") == "gan::training_iteration":
             return key
         current = parent
-    return None
+    return _enclosing_training_root(row, intervals or {})
 
 
 def per_iteration_stage_samples(rows):
-    """Return {(series_key, events): {stage: [per-iteration ms], total: [...]}}.
-
-    Only semantic leaf regions are summed. This makes the breakdown common to
-    PyTorch, C++, OpenMP, and SYCL without double-counting nested profiler ranges.
-    Two LOITS forwards and the generator backward naturally contribute to the
-    same GAN-iteration sample through the profiler parent hierarchy.
-    """
     rows = [row for row in rows if is_regions_file(row)]
     by_id = _event_maps(rows)
-    stage_regions = {name: regions for name, regions in STAGES}
-    region_to_stage = {}
-    for stage, regions in stage_regions.items():
-        for region in regions:
-            region_to_stage[region] = stage
+    intervals = _training_intervals(rows)
+    region_to_stage = {
+        region: stage
+        for stage, regions in STAGES
+        for region in regions
+    }
 
     by_iteration = defaultdict(lambda: defaultdict(float))
     for row in rows:
         stage = region_to_stage.get(row.get("region"))
         if stage is None:
             continue
-        root = training_root(row, by_id)
+        event_id = str(row.get("event_id") or "")
+        if event_id and by_id.get((row.get("_path", ""), event_id)) is not row:
+            continue
+        root = training_root(row, by_id, intervals)
         if root is None:
             continue
         key = (series_key(row), row["events"], root)
@@ -207,23 +273,17 @@ def per_iteration_stage_samples(rows):
 def training_samples(rows):
     grouped = defaultdict(list)
     for row in rows:
-        if not is_training_file(row):
+        if not is_training_file(row) or row.get("region") != "gan::training_iteration":
             continue
-        if row.get("region") != "gan::training_iteration":
+        wall_ms = row.get("wall_ms")
+        if wall_ms in (None, ""):
             continue
-        grouped[(series_key(row), row["events"])].append(float(row["cpu_ms"]) / 1000.0)
+        grouped[(series_key(row), row["events"])].append(float(wall_ms) / 1000.0)
     return grouped
 
 
-
 def fixed_resource_series(rows, cpu):
-    """Select one fixed-resource series per implementation.
-
-    If multiple explicit thread-count builds are present in the same results
-    directory, the largest thread count is used for the fixed-resource plot.
-    The complete set remains available to the strong/weak scaling plots.
-    """
-    subset = rows_for_device(rows, cpu)
+    subset = rows_for_device(rows_for_experiment(rows, "fixed"), cpu)
     grouped = defaultdict(set)
     for row in subset:
         full = series_key(row)
@@ -231,33 +291,37 @@ def fixed_resource_series(rows, cpu):
         grouped[base].add(full)
 
     selected = []
-    for base, candidates in grouped.items():
+    for candidates in grouped.values():
         def rank(key):
-            threads = str(key[3])
+            threads = str(key[4])
             return (1, int(threads)) if threads.isdigit() else (0, 0)
 
         selected.append(max(candidates, key=rank))
-    return sorted(selected, key=lambda key: (key[0], key[1], key[2]))
+    return sorted(selected, key=lambda key: (key[0], key[1], key[2], key[3]))
 
-def available_series(rows, cpu):
+
+def available_series(rows, cpu, experiment=None):
     subset = rows_for_device(rows, cpu)
+    if experiment is not None:
+        subset = rows_for_experiment(subset, experiment)
     keys = {series_key(row) for row in subset}
-    return sorted(keys, key=lambda key: (key[0], key[1], key[2], int(key[3]) if str(key[3]).isdigit() else 0))
+    return sorted(
+        keys,
+        key=lambda key: (
+            key[0], key[1], key[2], key[3],
+            int(key[4]) if str(key[4]).isdigit() else 0,
+        ),
+    )
 
 
-def available_events(rows, cpu):
-    return sorted({row["events"] for row in rows_for_device(rows, cpu) if row.get("events")})
+def available_events(rows, cpu, experiment=None):
+    subset = rows_for_device(rows, cpu)
+    if experiment is not None:
+        subset = rows_for_experiment(subset, experiment)
+    return sorted({row["events"] for row in subset if row.get("events")})
 
 
 def fixed_resource_events(series, stage_samples, training):
-    """Return event counts shared by every selected fixed-resource series.
-
-    Strong- and weak-scaling runs live in the same results directory as the
-    fixed-resource experiment.  Their event counts must not leak into the
-    fixed-resource figure.  A fixed-resource event size is therefore one for
-    which every selected implementation has both detailed region samples and
-    end-to-end training samples at its selected resource level.
-    """
     if not series:
         return []
 
@@ -267,5 +331,4 @@ def fixed_resource_events(series, stage_samples, training):
         training_events = {events for (sample_key, events) in training if sample_key == key}
         complete = stage_events & training_events
         common = complete if common is None else common & complete
-
     return sorted(common or ())

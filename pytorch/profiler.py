@@ -1,4 +1,5 @@
 import csv
+import time
 from pathlib import Path
 
 import torch
@@ -66,6 +67,20 @@ class TrainingProfiler:
         elif self.device.type == "xpu":
             torch.xpu.synchronize(self.device)
 
+    def measure(self, trainer, warmup=5, iterations=10):
+        for _ in range(warmup):
+            trainer.step()
+        self.synchronize()
+
+        samples = []
+        for _ in range(iterations):
+            self.synchronize()
+            start = time.perf_counter()
+            trainer.step()
+            self.synchronize()
+            samples.append((time.perf_counter() - start) * 1000.0)
+        return samples
+
     def run(self, trainer, warmup=5, iterations=10, trace_path=None):
         for _ in range(warmup):
             trainer.step()
@@ -90,7 +105,14 @@ class TrainingProfiler:
         return prof
 
     @staticmethod
-    def rows(prof, backend, device, n_events, implementation=None, threads=""):
+    def timing_rows(samples, metadata):
+        return [
+            dict(metadata, region="gan::training_iteration", occurrence=occurrence, wall_ms=wall_ms)
+            for occurrence, wall_ms in enumerate(samples)
+        ]
+
+    @staticmethod
+    def rows(prof, metadata):
         rows = []
         occurrences = {}
 
@@ -110,26 +132,22 @@ class TrainingProfiler:
             occurrences[event.name] = occurrence + 1
             parent = relevant_parent(event)
             rows.append(
-                {
-                    "backend": backend,
-                    "implementation": implementation or backend,
-                    "device": str(device),
-                    "events": n_events,
-                    "threads": threads,
-                    "region": event.name,
-                    "occurrence": occurrence,
-                    "event_id": event.id,
-                    "parent_event_id": parent.id if parent is not None else "",
-                    "parent_region": parent.name if parent is not None else "",
-                    "thread_id": event.thread,
-                    "sequence_nr": event.sequence_nr,
-                    "start_us": event.time_range.start,
-                    "end_us": event.time_range.end,
-                    "cpu_ms": event.cpu_time_total / 1000.0,
-                    "device_ms": event.device_time_total / 1000.0,
-                    "self_cpu_ms": event.self_cpu_time_total / 1000.0,
-                    "self_device_ms": event.self_device_time_total / 1000.0,
-                }
+                dict(
+                    metadata,
+                    region=event.name,
+                    occurrence=occurrence,
+                    event_id=event.id,
+                    parent_event_id=parent.id if parent is not None else "",
+                    parent_region=parent.name if parent is not None else "",
+                    thread_id=event.thread,
+                    sequence_nr=event.sequence_nr,
+                    start_us=event.time_range.start,
+                    end_us=event.time_range.end,
+                    cpu_ms=event.cpu_time_total / 1000.0,
+                    device_ms=event.device_time_total / 1000.0,
+                    self_cpu_ms=event.self_cpu_time_total / 1000.0,
+                    self_device_ms=event.self_device_time_total / 1000.0,
+                )
             )
         return rows
 

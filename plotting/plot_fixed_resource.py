@@ -14,14 +14,18 @@ from plotting.common import (
     mean_std,
     per_iteration_stage_samples,
     rows_for_device,
+    rows_for_experiment,
+    rows_for_site,
     series_label,
     training_samples,
 )
 from plotting.plotting_tools import clustered_positions, event_legend, plot_runtime_bars, stage_legend
 
 
-def generate(inputs, output, cpu):
-    rows = load_rows(inputs)
+def generate(inputs, output, cpu, site=None):
+    rows = rows_for_experiment(load_rows(inputs), "fixed")
+    if site is not None:
+        rows = rows_for_site(rows, site)
     rows = rows_for_device(rows, cpu)
     series = fixed_resource_series(rows, cpu)
     if not series:
@@ -32,10 +36,8 @@ def generate(inputs, output, cpu):
     if not stage_samples or not training:
         return False
 
-    # The results directory also contains strong/weak-scaling runs.  Only use
-    # event sizes that form a complete fixed-resource comparison across every
-    # selected implementation; otherwise weak-scaling sizes (20k, 40k, ...)
-    # create sparse/misaligned bars and an incorrect event legend.
+    # Keep only event sizes with complete timing and region data across every
+    # selected fixed-resource implementation.
     events = fixed_resource_events(series, stage_samples, training)
     if not events:
         return False
@@ -93,12 +95,13 @@ def generate(inputs, output, cpu):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate the old-style fixed-resource stacked/bar plot from current benchmark CSVs.")
+    parser = argparse.ArgumentParser(description="Generate a fixed-resource stacked/runtime plot.")
     parser.add_argument("--input", default="results/training")
-    parser.add_argument("--output", default="results/plots/cpu_scaling.pdf")
+    parser.add_argument("--output", default="results/plots/fixed.pdf")
+    parser.add_argument("--site")
     parser.add_argument("--gpu", action="store_true")
     args = parser.parse_args()
-    if not generate([args.input], args.output, cpu=not args.gpu):
+    if not generate([args.input], args.output, cpu=not args.gpu, site=args.site):
         raise SystemExit("not enough matching training + region data to generate this plot")
 
 

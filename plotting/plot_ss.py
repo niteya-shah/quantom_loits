@@ -4,53 +4,51 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from plotting.common import load_rows, mean_std, per_iteration_stage_samples, series_key
+from plotting.common import load_rows, mean_std, rows_for_experiment, rows_for_site, training_samples
 
 
-def _threaded_samples(rows):
-    raw = per_iteration_stage_samples(rows)
-    grouped = defaultdict(dict)
-    for (key, events), values in raw.items():
-        backend, implementation, device, threads = key
-        if device != "cpu" or not str(threads).isdigit():
+def generate(input_root="results/training", output="results/plots/strong.pdf", site=None):
+    rows = rows_for_experiment(load_rows([input_root]), "strong")
+    if site is not None:
+        rows = rows_for_site(rows, site)
+    samples = training_samples(rows)
+
+    threaded = defaultdict(dict)
+    cpp = {}
+    for (key, events), values in samples.items():
+        row_site, backend, implementation, device, threads = key
+        if device != "cpu":
             continue
-        grouped[(backend, implementation, events)][int(threads)] = values["total"]
-    return grouped, raw
+        if backend == "cpp":
+            cpp[events] = values
+            continue
+        if not str(threads).isdigit():
+            continue
+        threaded[(row_site, backend, implementation, events)][int(threads)] = values
 
-
-def generate(input_root="results/training", output="results/plots/strong_scaling.pdf"):
-    rows = load_rows([input_root])
-    threaded, raw = _threaded_samples(rows)
-    candidates = [(key, samples) for key, samples in threaded.items() if len(samples) >= 2]
+    candidates = [(key, values) for key, values in threaded.items() if len(values) >= 2]
     if not candidates:
         return False
 
-    event_count = max(key[2] for key, _ in candidates)
-    candidates = [(key, samples) for key, samples in candidates if key[2] == event_count]
-
-    cpp_values = None
-    for (key, events), values in raw.items():
-        if key[0] == "cpp" and key[2] == "cpu" and events == event_count:
-            cpp_values = values["total"]
-            break
+    event_count = max(key[3] for key, _ in candidates)
+    candidates = [(key, values) for key, values in candidates if key[3] == event_count]
+    cpp_values = cpp.get(event_count)
     if not cpp_values:
         return False
 
     ref_mean, ref_std = mean_std(cpp_values)
-    fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
-
-    all_threads = sorted({thread for _key, samples in candidates for thread in samples})
+    all_threads = sorted({thread for _key, values in candidates for thread in values})
     total_width = 0.75
-    nseries = len(candidates)
-    width = total_width / max(1, nseries)
+    width = total_width / len(candidates)
 
-    for sidx, (key, samples) in enumerate(sorted(candidates)):
-        backend, implementation, _events = key
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
+    for sidx, (key, values_by_thread) in enumerate(sorted(candidates)):
+        _site, backend, implementation, _events = key
         xs = []
         ys = []
         errors = []
         for tidx, threads in enumerate(all_threads):
-            values = samples.get(threads)
+            values = values_by_thread.get(threads)
             if not values:
                 continue
             mean, std = mean_std(values)
@@ -67,7 +65,7 @@ def generate(input_root="results/training", output="results/plots/strong_scaling
     ax.set_xticks(range(len(all_threads)))
     ax.set_xticklabels([str(value) for value in all_threads])
     ax.set_xlabel("Number of Threads")
-    ax.set_ylabel("LOITS Speedup over Serial C++")
+    ax.set_ylabel("GAN Iteration Speedup over Serial C++")
     ax.axhline(1.0, color="black", linestyle="--", alpha=0.7)
     ax.legend(fontsize=9)
     fig.tight_layout()
@@ -82,4 +80,4 @@ def generate(input_root="results/training", output="results/plots/strong_scaling
 
 if __name__ == "__main__":
     if not generate():
-        raise SystemExit("not enough threaded CPU region data to generate strong scaling")
+        raise SystemExit("not enough strong-scaling wall-clock data")

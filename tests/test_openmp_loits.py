@@ -137,7 +137,7 @@ def test_openmp_gan_training_and_region_profiler():
     assert "loits::backward::cdf_x" in names
     assert "loits::backward::rho_x" in names
 
-    rows = profiler.rows(prof, "openmp", "cpu", 30)
+    rows = profiler.rows(prof, {"site": "test", "experiment": "fixed", "backend": "openmp", "implementation": "openmp", "device": "cpu", "events": 30, "threads": "", "grid_size": 3, "warmup": 0, "iterations": 1, "seed": 0, "vjp_case": "", "compact_case": ""})
     forward = next(row for row in rows if row["region"] == "loits::forward")
     rho_x = next(row for row in rows if row["region"] == "loits::forward::rho_x")
     assert rho_x["parent_event_id"] == forward["event_id"]
