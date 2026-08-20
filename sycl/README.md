@@ -50,7 +50,8 @@ Each complete variant contains the native library plus one generated metadata fi
     variant.py
 
 `variant.py` contains a single `METADATA` dictionary recording the toolchain,
-target, Torch device type, and architecture that were actually built.
+target, Torch device type, architecture, and fixed launch geometry that were
+actually built.
 
 List complete builds with:
 
@@ -259,6 +260,20 @@ Installed toolchain roots can be selected with `ACPP_PREFIX` and
 `DPCPP_CXX`, `DPCPP_CPU_CXX`, `DPCPP_XPU_CXX`, `DPCPP_CUDA_CXX`, and
 `DPCPP_HIP_CXX`. Additional compiler flags can be supplied with
 `SYCL_EXTRA_FLAGS`.
+
+### Fixed launch geometry
+
+The performance-study launch geometry is finalized in the build scripts. There
+are no tuning cases or environment-variable overrides:
+
+| Build target | Interpolation VJP | Stream compaction |
+| --- | --- | --- |
+| AdaptiveCpp CPU/OpenMP | 1 lane x 8 items | 16 lanes x 4 items |
+| DPC++ Native CPU | 8 lanes x 4 items | 8 lanes x 4 items |
+| CUDA/HIP/XPU GPU | 64 lanes x 2 items | 64 lanes x 2 items |
+
+These are compile-time constants passed to the same `loits_core.cpp`; the
+computational implementation remains shared across all targets.
 
 For ROCm PyTorch, the Torch device string is still `cuda`.
 

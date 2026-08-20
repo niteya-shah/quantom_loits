@@ -59,18 +59,50 @@ WARMUP="${WARMUP:-3}"
 ITERS="${ITERS:-25}"
 SEED="${SEED:-0}"
 REGIONS="${REGIONS:-1}"
-read -r -a FIXED_EVENTS <<< "${FIXED_EVENTS:-100000 1000000 10000000 100000000}"
+read -r -a FIXED_EVENTS <<< "${FIXED_EVENTS:-100000 1000000 10000000 100000000 1000000000}"
 
 OUTPUT_ROOT="${OUTPUT_ROOT:-results/training}"
 SITE_PLOTS="${SITE_PLOTS:-results/plots/${SITE}}"
 GPU_PLOTS="${GPU_PLOTS:-results/plots/gpu}"
 
-for variant in "${SYCL_VARIANTS[@]}"; do
+verify_sycl_variant() {
+    local variant="$1"
+
     if [[ ! -f "sycl/build/$variant/variant.py" || ! -f "sycl/build/$variant/libquantom_loits_sycl.so" ]]; then
         echo "ERROR: SYCL variant '$variant' is not built." >&2
         echo "Build the required GPU SYCL backend before running this script." >&2
         exit 2
     fi
+
+    if ! python - "$variant" <<'PY'
+from pathlib import Path
+import sys
+
+variant = sys.argv[1]
+expected = (64, 2, 64, 2)
+namespace = {}
+exec((Path("sycl/build") / variant / "variant.py").read_text(), namespace)
+metadata = namespace["METADATA"]
+keys = (
+    "vjp_team_size",
+    "vjp_items_per_lane",
+    "compact_team_size",
+    "compact_items_per_lane",
+)
+actual = tuple(int(metadata.get(key, -1)) for key in keys)
+if actual != expected:
+    raise SystemExit(
+        f"{variant}: stale/non-final launch geometry {actual}; expected {expected}"
+    )
+PY
+    then
+        echo "ERROR: rebuild '$variant' with the finalized SYCL build scripts." >&2
+        exit 2
+    fi
+}
+
+for variant in "${SYCL_VARIANTS[@]}"; do
+    verify_sycl_variant "$variant"
 done
 
 mkdir -p "$OUTPUT_ROOT" "$SITE_PLOTS" "$GPU_PLOTS"

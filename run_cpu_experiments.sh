@@ -91,13 +91,48 @@ cpu_list_for_threads() {
     echo "${selected[*]}"
 }
 
-for variant in "$ACPP_VARIANT" "$DPCPP_VARIANT"; do
+verify_sycl_variant() {
+    local variant="$1"
+    shift
+
     if [[ ! -f "sycl/build/$variant/variant.py" || ! -f "sycl/build/$variant/libquantom_loits_sycl.so" ]]; then
         echo "ERROR: SYCL variant '$variant' is not built." >&2
-        echo "Build the CPU SYCL toolchains/backends for this site before running this script." >&2
+        echo "Build the final CPU SYCL backends before running this script." >&2
         exit 2
     fi
-done
+
+    if ! python - "$variant" "$@" <<'PY'
+from pathlib import Path
+import sys
+
+variant = sys.argv[1]
+expected = tuple(map(int, sys.argv[2:]))
+namespace = {}
+exec((Path("sycl/build") / variant / "variant.py").read_text(), namespace)
+metadata = namespace["METADATA"]
+keys = (
+    "vjp_team_size",
+    "vjp_items_per_lane",
+    "compact_team_size",
+    "compact_items_per_lane",
+)
+actual = tuple(int(metadata.get(key, -1)) for key in keys)
+if actual != expected:
+    raise SystemExit(
+        f"{variant}: stale/non-final launch geometry {actual}; expected {expected}"
+    )
+PY
+    then
+        echo "ERROR: rebuild '$variant' with the finalized SYCL build scripts." >&2
+        exit 2
+    fi
+}
+
+# Final CPU launch geometry:
+#   AdaptiveCpp: VJP 1x8, compaction 16x4
+#   DPC++:       VJP 8x4, compaction 8x4
+verify_sycl_variant "$ACPP_VARIANT" 1 8 16 4
+verify_sycl_variant "$DPCPP_VARIANT" 8 4 8 4
 
 export OMP_PLACES=cores
 export OMP_PROC_BIND=close

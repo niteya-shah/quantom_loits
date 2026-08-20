@@ -49,7 +49,7 @@ def csv_paths(inputs):
 
 def load_rows(inputs):
     rows = []
-    integer_fields = ("events", "grid_size", "warmup", "iterations", "seed", "vjp_case", "compact_case")
+    integer_fields = ("events", "grid_size", "warmup", "iterations", "seed")
     float_fields = (
         "wall_ms",
         "cpu_ms",

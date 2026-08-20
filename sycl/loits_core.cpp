@@ -9,12 +9,17 @@
 #include <cstdint>
 #include <stdexcept>
 
-#ifndef QUANTOM_SYCL_VJP_CASE
-#define QUANTOM_SYCL_VJP_CASE 4
+#ifndef QUANTOM_SYCL_VJP_TEAM_SIZE
+#error "QUANTOM_SYCL_VJP_TEAM_SIZE must be defined by the SYCL build"
 #endif
-
-#ifndef QUANTOM_SYCL_COMPACT_CASE
-#define QUANTOM_SYCL_COMPACT_CASE 4
+#ifndef QUANTOM_SYCL_VJP_ITEMS_PER_LANE
+#error "QUANTOM_SYCL_VJP_ITEMS_PER_LANE must be defined by the SYCL build"
+#endif
+#ifndef QUANTOM_SYCL_COMPACT_TEAM_SIZE
+#error "QUANTOM_SYCL_COMPACT_TEAM_SIZE must be defined by the SYCL build"
+#endif
+#ifndef QUANTOM_SYCL_COMPACT_ITEMS_PER_LANE
+#error "QUANTOM_SYCL_COMPACT_ITEMS_PER_LANE must be defined by the SYCL build"
 #endif
 
 namespace sycl_loits {
@@ -44,33 +49,27 @@ inline void decode_cell(int64_t global_cell,
   iy = cell - ix * s.ny;
 }
 
-struct KernelTuning {
+struct KernelLaunch {
   int team_size;
   int items_per_lane;
 };
 
-constexpr KernelTuning kernel_tuning(int tuning_case) {
-  switch (tuning_case) {
-    case 0: return {1, 8};
-    case 1: return {8, 4};
-    case 2: return {16, 4};
-    case 3: return {32, 4};
-    case 4: return {64, 2};
-    case 5: return {128, 1};
-    default: return {0, 0};
-  }
-}
-
-constexpr KernelTuning kVjpTuning = kernel_tuning(QUANTOM_SYCL_VJP_CASE);
-constexpr KernelTuning kCompactTuning = kernel_tuning(QUANTOM_SYCL_COMPACT_CASE);
-static_assert(kVjpTuning.team_size > 0, "invalid QUANTOM_SYCL_VJP_CASE");
-static_assert(kCompactTuning.team_size > 0, "invalid QUANTOM_SYCL_COMPACT_CASE");
-static_assert((kVjpTuning.team_size & (kVjpTuning.team_size - 1)) == 0,
+constexpr KernelLaunch kVjpLaunch{
+    QUANTOM_SYCL_VJP_TEAM_SIZE,
+    QUANTOM_SYCL_VJP_ITEMS_PER_LANE,
+};
+constexpr KernelLaunch kCompactLaunch{
+    QUANTOM_SYCL_COMPACT_TEAM_SIZE,
+    QUANTOM_SYCL_COMPACT_ITEMS_PER_LANE,
+};
+static_assert(kVjpLaunch.team_size > 0, "SYCL VJP team size must be positive");
+static_assert(kCompactLaunch.team_size > 0, "SYCL compaction team size must be positive");
+static_assert((kVjpLaunch.team_size & (kVjpLaunch.team_size - 1)) == 0,
               "SYCL VJP team size must be a power of two");
-static_assert((kCompactTuning.team_size & (kCompactTuning.team_size - 1)) == 0,
+static_assert((kCompactLaunch.team_size & (kCompactLaunch.team_size - 1)) == 0,
               "SYCL compaction team size must be a power of two");
-static_assert(kVjpTuning.items_per_lane > 0, "SYCL VJP items per lane must be positive");
-static_assert(kCompactTuning.items_per_lane > 0, "SYCL compaction items per lane must be positive");
+static_assert(kVjpLaunch.items_per_lane > 0, "SYCL VJP items per lane must be positive");
+static_assert(kCompactLaunch.items_per_lane > 0, "SYCL compaction items per lane must be positive");
 
 }  // namespace
 
@@ -433,7 +432,7 @@ int64_t compact(const double* QUANTOM_RESTRICT dense_x,
                 int64_t* QUANTOM_RESTRICT packed,
                 int64_t* QUANTOM_RESTRICT row_offsets,
                 const Shape& s) {
-  return compact_specialized<kCompactTuning.team_size, kCompactTuning.items_per_lane>(
+  return compact_specialized<kCompactLaunch.team_size, kCompactLaunch.items_per_lane>(
       dense_x, dense_q, counts, nmax, events, packed, row_offsets, s);
 }
 
@@ -533,28 +532,28 @@ void interpolation_vjp_dispatch(const double* QUANTOM_RESTRICT grad_events,
   const int64_t k = QAxis ? s.kq : s.kx;
   switch (k) {
     case 4:
-      return interpolation_vjp_specialized<4, QAxis, kVjpTuning.team_size,
-                                           kVjpTuning.items_per_lane>(
+      return interpolation_vjp_specialized<4, QAxis, kVjpLaunch.team_size,
+                                           kVjpLaunch.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 5:
-      return interpolation_vjp_specialized<5, QAxis, kVjpTuning.team_size,
-                                           kVjpTuning.items_per_lane>(
+      return interpolation_vjp_specialized<5, QAxis, kVjpLaunch.team_size,
+                                           kVjpLaunch.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 8:
-      return interpolation_vjp_specialized<8, QAxis, kVjpTuning.team_size,
-                                           kVjpTuning.items_per_lane>(
+      return interpolation_vjp_specialized<8, QAxis, kVjpLaunch.team_size,
+                                           kVjpLaunch.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 10:
-      return interpolation_vjp_specialized<10, QAxis, kVjpTuning.team_size,
-                                            kVjpTuning.items_per_lane>(
+      return interpolation_vjp_specialized<10, QAxis, kVjpLaunch.team_size,
+                                            kVjpLaunch.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 16:
-      return interpolation_vjp_specialized<16, QAxis, kVjpTuning.team_size,
-                                            kVjpTuning.items_per_lane>(
+      return interpolation_vjp_specialized<16, QAxis, kVjpLaunch.team_size,
+                                            kVjpLaunch.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     case 32:
-      return interpolation_vjp_specialized<32, QAxis, kVjpTuning.team_size,
-                                            kVjpTuning.items_per_lane>(
+      return interpolation_vjp_specialized<32, QAxis, kVjpLaunch.team_size,
+                                            kVjpLaunch.items_per_lane>(
           grad_events, packed, row_offsets, bins, cdf, u, indices, grad_cdf, s);
     default:
       throw std::runtime_error("unsupported interpolation VJP K");

@@ -14,10 +14,10 @@ def safe_component(value):
 
 def implementation_metadata(backend):
     if backend != "sycl":
-        return backend, "", ""
-    from sycl.backend import configured_compact_case, configured_vjp_case, selected_variant
+        return backend
+    from sycl.backend import selected_variant
 
-    return selected_variant(), configured_vjp_case(), configured_compact_case()
+    return selected_variant()
 
 
 def native_threads(backend, device):
@@ -31,11 +31,8 @@ def native_threads(backend, device):
     return ""
 
 
-def result_directory(args, backend, vjp_case, compact_case):
-    directory = Path(args.output) / safe_component(args.site) / safe_component(args.experiment)
-    if args.experiment == "tuning" and backend == "sycl":
-        directory /= f"vjp{vjp_case}-compact{compact_case}"
-    return directory
+def result_directory(args):
+    return Path(args.output) / safe_component(args.site) / safe_component(args.experiment)
 
 
 def result_stem(kind, implementation, device, events, threads=""):
@@ -52,7 +49,7 @@ def result_stem(kind, implementation, device, events, threads=""):
     )
 
 
-def row_metadata(args, implementation, threads, vjp_case, compact_case):
+def row_metadata(args, implementation, threads):
     return {
         "site": args.site,
         "experiment": args.experiment,
@@ -65,8 +62,6 @@ def row_metadata(args, implementation, threads, vjp_case, compact_case):
         "warmup": args.warmup,
         "iterations": args.iterations,
         "seed": args.seed,
-        "vjp_case": vjp_case,
-        "compact_case": compact_case,
     }
 
 
@@ -84,10 +79,10 @@ def run(args, profile_regions=False):
     if profile_regions and args.backend == "torch":
         hooks = RegionHooks(trainer.sampler.impl)
 
-    implementation, vjp_case, compact_case = implementation_metadata(args.backend)
+    implementation = implementation_metadata(args.backend)
     threads = native_threads(args.backend, args.device)
-    metadata = row_metadata(args, implementation, threads, vjp_case, compact_case)
-    output = result_directory(args, args.backend, vjp_case, compact_case)
+    metadata = row_metadata(args, implementation, threads)
+    output = result_directory(args)
     output.mkdir(parents=True, exist_ok=True)
     profiler = TrainingProfiler(args.device)
 
@@ -127,7 +122,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", default="results/training")
     parser.add_argument("--site", default=os.environ.get("QUANTOM_SITE", ""))
-    parser.add_argument("--experiment", default="fixed", choices=("fixed", "strong", "weak", "tuning"))
+    parser.add_argument("--experiment", default="fixed", choices=("fixed", "strong", "weak"))
     parser.add_argument("--regions", action="store_true")
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--list-backends", action="store_true")

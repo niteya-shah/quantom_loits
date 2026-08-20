@@ -31,8 +31,6 @@ def _base(**overrides):
         "warmup": 5,
         "iterations": 20,
         "seed": 0,
-        "vjp_case": "",
-        "compact_case": "",
     }
     row.update(overrides)
     return row
@@ -93,8 +91,6 @@ def test_duplicate_profiler_event_ids_prefer_nested_row(tmp_path):
         backend="sycl",
         implementation="acpp-odyssey-mi300a",
         device="cuda",
-        vjp_case=4,
-        compact_case=4,
         device_ms=0.0,
         self_cpu_ms=0.0,
         self_device_ms=0.0,
@@ -118,8 +114,6 @@ def test_parentless_native_backward_uses_training_interval(tmp_path):
         backend="sycl",
         implementation="dpcpp-aurora-pvc",
         device="xpu",
-        vjp_case=4,
-        compact_case=4,
         device_ms=0.0,
         self_cpu_ms=0.0,
         self_device_ms=0.0,
