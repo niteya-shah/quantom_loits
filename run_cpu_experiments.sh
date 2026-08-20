@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+
 
 # Run from inside an allocated CPU compute node/job.
 # By default all physical CPU cores visible to the allocation are used.
