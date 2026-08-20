@@ -67,21 +67,20 @@ class TrainingProfiler:
         elif self.device.type == "xpu":
             torch.xpu.synchronize(self.device)
 
-    def restore(self, trainer, state):
-        self.synchronize()
-        trainer.restore_state(state)
+    def restore_generator_params(self, trainer, params):
+        trainer.restore_generator_params(params)
         self.synchronize()
 
     def measure(self, trainer, warmup=5, iterations=10):
-        state = trainer.snapshot_state()
+        params = trainer.snapshot_generator_params()
         for _ in range(warmup):
-            self.restore(trainer, state)
+            self.restore_generator_params(trainer, params)
             trainer.step()
         self.synchronize()
 
         samples = []
         for _ in range(iterations):
-            self.restore(trainer, state)
+            self.restore_generator_params(trainer, params)
             start = time.perf_counter()
             trainer.step()
             self.synchronize()
@@ -89,9 +88,9 @@ class TrainingProfiler:
         return samples
 
     def run(self, trainer, warmup=5, iterations=10, trace_path=None):
-        state = trainer.snapshot_state()
+        params = trainer.snapshot_generator_params()
         for _ in range(warmup):
-            self.restore(trainer, state)
+            self.restore_generator_params(trainer, params)
             trainer.step()
         self.synchronize()
 
@@ -103,7 +102,7 @@ class TrainingProfiler:
             acc_events=True,
         ) as prof:
             for _ in range(iterations):
-                self.restore(trainer, state)
+                self.restore_generator_params(trainer, params)
                 with record_function("gan::training_iteration"):
                     trainer.step()
                     self.synchronize()
