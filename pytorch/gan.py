@@ -1,3 +1,4 @@
+import copy
 from contextlib import nullcontext
 
 import torch
@@ -97,13 +98,46 @@ class GANTrainer:
     def _region(self, name):
         return record_function(name) if self.profile_regions else nullcontext()
 
-    def reset_rng(self):
-        torch.manual_seed(self.seed)
+    def snapshot_state(self):
         impl = self.sampler.impl
-        if hasattr(impl, "seed"):
-            impl.seed = self.seed
-        if hasattr(impl, "sequence"):
-            impl.sequence = 0
+        state = {
+            "params": self.params.detach().clone(),
+            "discriminator": copy.deepcopy(self.discriminator.state_dict()),
+            "d_optimizer": copy.deepcopy(self.d_optimizer.state_dict()),
+            "g_optimizer": copy.deepcopy(self.g_optimizer.state_dict()),
+            "cpu_rng": torch.get_rng_state().clone(),
+            "device_rng": None,
+            "sampler_seed": getattr(impl, "seed", None),
+            "sampler_sequence": getattr(impl, "sequence", None),
+        }
+        if self.device.type == "cuda":
+            state["device_rng"] = torch.cuda.get_rng_state(self.device).clone()
+        elif self.device.type == "xpu":
+            state["device_rng"] = torch.xpu.get_rng_state(self.device).clone()
+        return state
+
+    def restore_state(self, state):
+        with torch.no_grad():
+            self.params.copy_(state["params"])
+        self.discriminator.load_state_dict(state["discriminator"])
+        self.d_optimizer.load_state_dict(copy.deepcopy(state["d_optimizer"]))
+        self.g_optimizer.load_state_dict(copy.deepcopy(state["g_optimizer"]))
+
+        self.params.grad = None
+        for parameter in self.discriminator.parameters():
+            parameter.grad = None
+
+        torch.set_rng_state(state["cpu_rng"])
+        if self.device.type == "cuda" and state["device_rng"] is not None:
+            torch.cuda.set_rng_state(state["device_rng"], self.device)
+        elif self.device.type == "xpu" and state["device_rng"] is not None:
+            torch.xpu.set_rng_state(state["device_rng"], self.device)
+
+        impl = self.sampler.impl
+        if state["sampler_seed"] is not None:
+            impl.seed = state["sampler_seed"]
+        if state["sampler_sequence"] is not None:
+            impl.sequence = state["sampler_sequence"]
 
     def step(self):
         with self._region("gan::discriminator_step"):
