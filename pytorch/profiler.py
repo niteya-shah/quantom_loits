@@ -69,11 +69,13 @@ class TrainingProfiler:
 
     def measure(self, trainer, warmup=5, iterations=10):
         for _ in range(warmup):
+            trainer.reset_rng()
             trainer.step()
         self.synchronize()
 
         samples = []
         for _ in range(iterations):
+            trainer.reset_rng()
             self.synchronize()
             start = time.perf_counter()
             trainer.step()
@@ -83,6 +85,7 @@ class TrainingProfiler:
 
     def run(self, trainer, warmup=5, iterations=10, trace_path=None):
         for _ in range(warmup):
+            trainer.reset_rng()
             trainer.step()
         self.synchronize()
 
@@ -94,6 +97,7 @@ class TrainingProfiler:
             acc_events=True,
         ) as prof:
             for _ in range(iterations):
+                trainer.reset_rng()
                 with record_function("gan::training_iteration"):
                     trainer.step()
                     self.synchronize()

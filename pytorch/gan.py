@@ -34,7 +34,8 @@ class GANTrainer:
         profile_regions=False,
         seed=0,
     ):
-        torch.manual_seed(seed)
+        self.seed = int(seed)
+        torch.manual_seed(self.seed)
         self.backend = backend
         self.device = torch.device(device)
         self.n_events = n_events
@@ -95,6 +96,14 @@ class GANTrainer:
 
     def _region(self, name):
         return record_function(name) if self.profile_regions else nullcontext()
+
+    def reset_rng(self):
+        torch.manual_seed(self.seed)
+        impl = self.sampler.impl
+        if hasattr(impl, "seed"):
+            impl.seed = self.seed
+        if hasattr(impl, "sequence"):
+            impl.sequence = 0
 
     def step(self):
         with self._region("gan::discriminator_step"):
