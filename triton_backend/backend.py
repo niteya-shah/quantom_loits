@@ -8,15 +8,15 @@ import triton
 import triton.language as tl
 
 
-_EPSILON = 1e-5
-_ALLOC_BLOCK = 256
-_SLOT_BLOCK = 128
-_CELL_LANES = 64
-_ITEMS_PER_LANE = 2
-_SCAN_BLOCK = 256
+_EPSILON: float = 1e-5
+_ALLOC_BLOCK: int = 256
+_SLOT_BLOCK: int = 128
+_CELL_LANES: int = 64
+_ITEMS_PER_LANE: int = 2
+_SCAN_BLOCK: int = 256
 
 
-def availability(device="cpu"):
+def availability(device: torch.device | str = "cpu") -> tuple[bool, str]:
     device = torch.device(device)
     if device.type == "cuda":
         return (True, "") if torch.cuda.is_available() else (
@@ -29,11 +29,11 @@ def availability(device="cpu"):
     return False, "Triton backend is GPU-only (cuda/ROCm or xpu)"
 
 
-def _region(enabled, name):
+def _region(enabled: bool, name: str):
     return record_function(name) if enabled else nullcontext()
 
 
-def _device_guard(device):
+def _device_guard(device: torch.device | str):
     device = torch.device(device)
     if device.type == "cuda":
         return torch.cuda.device(device)
@@ -51,12 +51,11 @@ def _allocation_kernel(
     n_events,
     BLOCK: tl.constexpr,
 ):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    pid = tl.program_id(0).to(tl.int64)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK).to(tl.int64)
     mask = offsets < n
     weight = tl.load(weights + offsets, mask=mask, other=0.0)
     count = tl.abs(weight * n_events).to(tl.int64)
-    count = tl.where(mask, count, 0)
     tl.store(counts + offsets, count, mask=mask)
     tl.store(partial_max + pid, tl.max(count, axis=0))
 
@@ -68,7 +67,7 @@ def _allocation_reduce_kernel(
     n,
     BLOCK: tl.constexpr,
 ):
-    offsets = tl.arange(0, BLOCK)
+    offsets = tl.arange(0, BLOCK).to(tl.int64)
     mask = offsets < n
     maxima = tl.load(partial_max + offsets, mask=mask, other=0)
     tl.store(result, tl.max(maxima, axis=0))
@@ -86,10 +85,10 @@ def _density_kernel(
     BLOCK_K: tl.constexpr,
     Q_AXIS: tl.constexpr,
 ):
-    cell = tl.program_id(0)
-    cells = NX * NY
-    b = cell // cells
-    within = cell - b * cells
+    cell = tl.program_id(0).to(tl.int64)
+    CELLS: tl.constexpr = NX * NY
+    b = cell // CELLS
+    within = cell - b * CELLS
     ix = within // NY
     iy = within - ix * NY
     k = tl.arange(0, BLOCK_K)
@@ -136,10 +135,10 @@ def _cdf_kernel(
     BLOCK_K: tl.constexpr,
     Q_AXIS: tl.constexpr,
 ):
-    cell = tl.program_id(0)
-    cells = NX * NY
-    b = cell // cells
-    within = cell - b * cells
+    cell = tl.program_id(0).to(tl.int64)
+    CELLS: tl.constexpr = NX * NY
+    b = cell // CELLS
+    within = cell - b * CELLS
     ix = within // NY
     iy = within - ix * NY
     k = tl.arange(0, BLOCK_K)
@@ -200,12 +199,12 @@ def _philox_uniform_kernel(
     k0 = tl.full((BLOCK,), seed_lo, tl.uint32)
     k1 = tl.full((BLOCK,), seed_hi, tl.uint32)
 
-    m0 = 0xD2511F53
-    m1 = 0xCD9E8D57
-    w0 = 0x9E3779B9
-    w1 = 0xBB67AE85
+    m0 = tl.full((BLOCK,), 0xD2511F53, tl.uint32)
+    m1 = tl.full((BLOCK,), 0xCD9E8D57, tl.uint32)
+    w0 = tl.full((BLOCK,), 0x9E3779B9, tl.uint32)
+    w1 = tl.full((BLOCK,), 0xBB67AE85, tl.uint32)
 
-    for round_index in range(10):
+    for round_index in tl.static_range(0, 10):
         hi0 = tl.umulhi(c0, m0)
         lo0 = c0 * m0
         hi1 = tl.umulhi(c2, m1)
@@ -222,7 +221,7 @@ def _philox_uniform_kernel(
             k0 = k0 + w0
             k1 = k1 + w1
 
-    scale = 5.9604644775390625e-08
+    scale = tl.full((BLOCK,), 5.9604644775390625e-08, tl.float64)
     r0 = (c0 >> 8).to(tl.float64) * scale
     r1 = (c1 >> 8).to(tl.float64) * scale
     r2 = (c2 >> 8).to(tl.float64) * scale
@@ -251,16 +250,19 @@ def _interpolate_kernel(
     Q_AXIS: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
-    p = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    p = (
+        tl.program_id(0).to(tl.int64) * BLOCK
+        + tl.arange(0, BLOCK).to(tl.int64)
+    )
     slot_mask = p < total_slots
     cell = p // nmax
     slot = p - cell * nmax
     count = tl.load(counts + cell, mask=slot_mask, other=0)
     active = slot_mask & (slot < count)
 
-    cells = NX * NY
-    b = cell // cells
-    within = cell - b * cells
+    CELLS: tl.constexpr = NX * NY
+    b = cell // CELLS
+    within = cell - b * CELLS
     ix = within // NY
     iy = within - ix * NY
 
@@ -307,15 +309,15 @@ def _count_valid_kernel(
     LANES: tl.constexpr,
     ITEMS_PER_LANE: tl.constexpr,
 ):
-    cell = tl.program_id(0)
-    count = tl.load(counts + cell)
+    cell = tl.program_id(0).to(tl.int64)
+    count = tl.load(counts + cell).to(tl.int64)
     base = cell * nmax
-    total = 0
     max_double = 1.7976931348623157e308
 
     TILE_SIZE: tl.constexpr = LANES * ITEMS_PER_LANE
+    total = count - count  # int64 scalar zero; loop-carried type stays int64
     for start in tl.range(0, count, TILE_SIZE):
-        slot = start + tl.arange(0, TILE_SIZE)
+        slot = start + tl.arange(0, TILE_SIZE).to(tl.int64)
         mask = slot < count
         x = tl.load(dense_x + base + slot, mask=mask, other=0.0)
         q = tl.load(dense_q + base + slot, mask=mask, other=0.0)
@@ -326,7 +328,7 @@ def _count_valid_kernel(
             & (tl.abs(q) <= max_double)
         )
         valid = mask & finite & (x * q != 0.0)
-        total += tl.sum(valid.to(tl.int64), axis=0)
+        total = total + tl.sum(valid.to(tl.int64), axis=0)
 
     tl.store(valid_counts + cell, total)
 
@@ -338,15 +340,16 @@ def _scan_counts_kernel(
     n,
     BLOCK: tl.constexpr,
 ):
-    carry = 0
+    carry = tl.load(valid_counts).to(tl.int64)
+    carry = carry - carry  # int64 scalar zero; n is always global_cells > 0
     for start in tl.range(0, n, BLOCK):
-        offsets = start + tl.arange(0, BLOCK)
+        offsets = start + tl.arange(0, BLOCK).to(tl.int64)
         mask = offsets < n
-        values = tl.load(valid_counts + offsets, mask=mask, other=0)
+        values = tl.load(valid_counts + offsets, mask=mask, other=0).to(tl.int64)
         inclusive = tl.cumsum(values, axis=0)
         exclusive = carry + inclusive - values
         tl.store(row_offsets + offsets, exclusive, mask=mask)
-        carry += tl.sum(values, axis=0)
+        carry = carry + tl.sum(values, axis=0)
     tl.store(row_offsets + n, carry)
 
 
@@ -362,16 +365,16 @@ def _scatter_compact_kernel(
     LANES: tl.constexpr,
     ITEMS_PER_LANE: tl.constexpr,
 ):
-    cell = tl.program_id(0)
-    count = tl.load(counts + cell)
+    cell = tl.program_id(0).to(tl.int64)
+    count = tl.load(counts + cell).to(tl.int64)
     dense_base = cell * nmax
-    row_base = tl.load(row_offsets + cell)
-    carry = 0
+    row_base = tl.load(row_offsets + cell).to(tl.int64)
     max_double = 1.7976931348623157e308
 
     TILE_SIZE: tl.constexpr = LANES * ITEMS_PER_LANE
+    carry = count - count  # int64 scalar zero; loop-carried type stays int64
     for start in tl.range(0, count, TILE_SIZE):
-        slot = start + tl.arange(0, TILE_SIZE)
+        slot = start + tl.arange(0, TILE_SIZE).to(tl.int64)
         mask = slot < count
         p = dense_base + slot
         x = tl.load(dense_x + p, mask=mask, other=0.0)
@@ -389,7 +392,7 @@ def _scatter_compact_kernel(
         tl.store(events + row * 2 + 0, x, mask=valid)
         tl.store(events + row * 2 + 1, q, mask=valid)
         tl.store(packed + row, p, mask=valid)
-        carry += tl.sum(flags, axis=0)
+        carry = carry + tl.sum(flags, axis=0)
 
 
 @triton.jit
@@ -411,13 +414,13 @@ def _interpolation_vjp_kernel(
     LANES: tl.constexpr,
     ITEMS_PER_LANE: tl.constexpr,
 ):
-    cell = tl.program_id(0)
-    row_begin = tl.load(row_offsets + cell)
-    row_end = tl.load(row_offsets + cell + 1)
+    cell = tl.program_id(0).to(tl.int64)
+    row_begin = tl.load(row_offsets + cell).to(tl.int64)
+    row_end = tl.load(row_offsets + cell + 1).to(tl.int64)
 
-    cells = NX * NY
-    b = cell // cells
-    within = cell - b * cells
+    CELLS: tl.constexpr = NX * NY
+    b = cell // CELLS
+    within = cell - b * CELLS
     ix = within // NY
     iy = within - ix * NY
     if Q_AXIS:
@@ -429,7 +432,7 @@ def _interpolation_vjp_kernel(
 
     ks = tl.arange(0, BLOCK_K)
     k_mask = ks < K
-    lanes = tl.arange(0, LANES)
+    lanes = tl.arange(0, LANES).to(tl.int64)
     acc = tl.zeros((BLOCK_K,), dtype=tl.float64)
     TILE_SIZE: tl.constexpr = LANES * ITEMS_PER_LANE
 
@@ -437,7 +440,7 @@ def _interpolation_vjp_kernel(
         for item in tl.static_range(ITEMS_PER_LANE):
             rows = start + lanes + item * LANES
             row_mask = rows < row_end
-            p = tl.load(packed + rows, mask=row_mask, other=0)
+            p = tl.load(packed + rows, mask=row_mask, other=0).to(tl.int64)
             j = tl.load(indices + p, mask=row_mask, other=0).to(tl.int32)
             uv = tl.load(u + p, mask=row_mask, other=0.0)
 
@@ -463,12 +466,12 @@ def _interpolation_vjp_kernel(
                 left[:, None],
                 0.0,
             )
-            contrib += tl.where(
+            contrib = contrib + tl.where(
                 row_mask[:, None] & k_mask[None, :] & (j2 + 1 == k2),
                 right[:, None],
                 0.0,
             )
-            acc += tl.sum(contrib, axis=0)
+            acc = acc + tl.sum(contrib, axis=0)
 
     tl.store(grad_cdf + curve_base + ks, acc, mask=k_mask)
 
@@ -485,10 +488,10 @@ def _cdf_vjp_kernel(
     BLOCK_K: tl.constexpr,
     Q_AXIS: tl.constexpr,
 ):
-    cell = tl.program_id(0)
-    cells = NX * NY
-    b = cell // cells
-    within = cell - b * cells
+    cell = tl.program_id(0).to(tl.int64)
+    CELLS: tl.constexpr = NX * NY
+    b = cell // CELLS
+    within = cell - b * CELLS
     ix = within // NY
     iy = within - ix * NY
     k = tl.arange(0, BLOCK_K)
@@ -534,10 +537,10 @@ def _density_vjp_kernel(
     BLOCK_K: tl.constexpr,
     Q_AXIS: tl.constexpr,
 ):
-    cell = tl.program_id(0)
-    cells = NX * NY
-    b = cell // cells
-    within = cell - b * cells
+    cell = tl.program_id(0).to(tl.int64)
+    CELLS: tl.constexpr = NX * NY
+    b = cell // CELLS
+    within = cell - b * CELLS
     ix = within // NY
     iy = within - ix * NY
     k = tl.arange(0, BLOCK_K)
@@ -574,7 +577,7 @@ def _density_vjp_kernel(
     tl.store(grad_xsec + curve_base + k, gx, mask=mask)
 
 
-def _allocate(weights, n_events):
+def _allocate(weights: torch.Tensor, n_events: int) -> tuple[torch.Tensor, int]:
     n = weights.numel()
     counts = torch.empty(n, device=weights.device, dtype=torch.int64)
     partials = triton.cdiv(n, _ALLOC_BLOCK)
@@ -598,7 +601,12 @@ def _allocate(weights, n_events):
     return counts, int(result.item())
 
 
-def _philox_uniform(count, seed, stream, device):
+def _philox_uniform(
+    count: int,
+    seed: int,
+    stream: int,
+    device: torch.device,
+) -> torch.Tensor:
     output = torch.empty(count, device=device, dtype=torch.float64)
     if count == 0:
         return output
@@ -623,17 +631,17 @@ def _philox_uniform(count, seed, stream, device):
 
 
 def _forward_impl(
-    x_bins,
-    xsec_x,
-    q_bins,
-    xsec_q,
-    weights,
-    acceptance,
-    n_events,
-    seed,
-    sequence,
-    profile_regions,
-):
+    x_bins: torch.Tensor,
+    xsec_x: torch.Tensor,
+    q_bins: torch.Tensor,
+    xsec_q: torch.Tensor,
+    weights: torch.Tensor,
+    acceptance: torch.Tensor,
+    n_events: int,
+    seed: int,
+    sequence: int,
+    profile_regions: bool,
+) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
     batch = x_bins.shape[0]
     nx = x_bins.shape[1]
     ny = q_bins.shape[1]
@@ -826,15 +834,15 @@ def _forward_impl(
 
 
 def _backward_impl(
-    grad_events,
-    x_bins,
-    xsec_x,
-    q_bins,
-    xsec_q,
-    acceptance,
-    state,
-    profile_regions,
-):
+    grad_events: torch.Tensor,
+    x_bins: torch.Tensor,
+    xsec_x: torch.Tensor,
+    q_bins: torch.Tensor,
+    xsec_q: torch.Tensor,
+    acceptance: torch.Tensor,
+    state: tuple[torch.Tensor, ...],
+    profile_regions: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
     (
         norm_x,
         norm_q,
@@ -1039,24 +1047,24 @@ class _TritonLOITSFunction(torch.autograd.Function):
 class TritonLOITS(nn.Module):
     def __init__(
         self,
-        device="cuda",
-        compile=False,
-        profile_regions=False,
-        epsilon=_EPSILON,
+        device: torch.device | str = "cuda",
+        compile: bool = False,
+        profile_regions: bool = False,
+        epsilon: float = _EPSILON,
     ):
         super().__init__()
-        self.device = torch.device(device)
+        self.device: torch.device = torch.device(device)
         ok, reason = availability(self.device)
         if not ok:
             raise RuntimeError(reason)
         if epsilon != _EPSILON:
             raise ValueError("The Triton backend currently uses the LOITS epsilon 1e-5")
-        self.profile_regions = bool(profile_regions)
-        self.seed = torch.initial_seed()
-        self.sequence = 0
+        self.profile_regions: bool = bool(profile_regions)
+        self.seed: int = torch.initial_seed()
+        self.sequence: int = 0
 
     @staticmethod
-    def _validate(theory_outputs):
+    def _validate(theory_outputs: tuple[torch.Tensor, ...]) -> None:
         x_bins, xsec_x, q_bins, xsec_q, weights, acceptance = theory_outputs[:6]
         floating = (x_bins, xsec_x, q_bins, xsec_q, weights)
         if any(t.dtype != torch.float64 for t in floating):
@@ -1066,7 +1074,7 @@ class TritonLOITS(nn.Module):
         if any(not t.is_contiguous() for t in theory_outputs[:6]):
             raise ValueError("Triton LOITS requires contiguous theory tensors")
 
-    def forward(self, theory_outputs, n_events):
+    def forward(self, theory_outputs: tuple[torch.Tensor, ...], n_events: int) -> torch.Tensor:
         self._validate(theory_outputs)
         x_bins, xsec_x, q_bins, xsec_q, weights, acceptance = theory_outputs[:6]
         if xsec_x.device.type != self.device.type or (
