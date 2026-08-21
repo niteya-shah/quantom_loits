@@ -313,9 +313,9 @@ def _count_valid_kernel(
     total = 0
     max_double = 1.7976931348623157e308
 
-    tile_size = LANES * ITEMS_PER_LANE
-    for start in tl.range(0, count, tile_size):
-        slot = start + tl.arange(0, tile_size)
+    TILE_SIZE: tl.constexpr = LANES * ITEMS_PER_LANE
+    for start in tl.range(0, count, TILE_SIZE):
+        slot = start + tl.arange(0, TILE_SIZE)
         mask = slot < count
         x = tl.load(dense_x + base + slot, mask=mask, other=0.0)
         q = tl.load(dense_q + base + slot, mask=mask, other=0.0)
@@ -369,9 +369,9 @@ def _scatter_compact_kernel(
     carry = 0
     max_double = 1.7976931348623157e308
 
-    tile_size = LANES * ITEMS_PER_LANE
-    for start in tl.range(0, count, tile_size):
-        slot = start + tl.arange(0, tile_size)
+    TILE_SIZE: tl.constexpr = LANES * ITEMS_PER_LANE
+    for start in tl.range(0, count, TILE_SIZE):
+        slot = start + tl.arange(0, TILE_SIZE)
         mask = slot < count
         p = dense_base + slot
         x = tl.load(dense_x + p, mask=mask, other=0.0)
@@ -431,9 +431,9 @@ def _interpolation_vjp_kernel(
     k_mask = ks < K
     lanes = tl.arange(0, LANES)
     acc = tl.zeros((BLOCK_K,), dtype=tl.float64)
-    tile_size = LANES * ITEMS_PER_LANE
+    TILE_SIZE: tl.constexpr = LANES * ITEMS_PER_LANE
 
-    for start in tl.range(row_begin, row_end, tile_size):
+    for start in tl.range(row_begin, row_end, TILE_SIZE):
         for item in tl.static_range(ITEMS_PER_LANE):
             rows = start + lanes + item * LANES
             row_mask = rows < row_end
