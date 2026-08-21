@@ -185,7 +185,7 @@ from plotting.plot_fixed_resource import generate
 
 assert generate(
     ["$OUTPUT_ROOT"],
-    "$SITE_PLOTS/fixed.pdf",
+    "$SITE_PLOTS/fixed.png",
     cpu=False,
     site="$SITE",
 )
@@ -194,7 +194,7 @@ assert generate(
 # whatever complete GPU datasets are currently present.
 generate(
     ["$OUTPUT_ROOT"],
-    "$GPU_PLOTS/fixed.pdf",
+    "$GPU_PLOTS/fixed.png",
     cpu=False,
 )
 PY
@@ -204,6 +204,6 @@ echo
 echo "Done."
 echo "Results: $OUTPUT_ROOT/$SITE/fixed/"
 if [[ "$REGIONS" != "0" ]]; then
-    echo "Plot:    $SITE_PLOTS/fixed.pdf"
-    echo "GPU plot:$GPU_PLOTS/fixed.pdf"
+    echo "Plot:    $SITE_PLOTS/fixed.png"
+    echo "GPU plot:$GPU_PLOTS/fixed.png"
 fi

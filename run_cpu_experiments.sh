@@ -268,17 +268,17 @@ echo "============================================================"
 
 python - <<PY
 from plotting.plot_ss import generate
-assert generate("$OUTPUT_ROOT", "$PLOTS/strong.pdf", site="$SITE")
+assert generate("$OUTPUT_ROOT", "$PLOTS/strong.png", site="$SITE")
 PY
 
 python - <<PY
 from plotting.plot_ws import generate
-assert generate("$OUTPUT_ROOT", "$PLOTS/weak.pdf", site="$SITE")
+assert generate("$OUTPUT_ROOT", "$PLOTS/weak.png", site="$SITE")
 PY
 
 python - <<PY
 from plotting.plot_fixed_resource import generate
-assert generate(["$OUTPUT_ROOT"], "$PLOTS/fixed.pdf", cpu=True, site="$SITE")
+assert generate(["$OUTPUT_ROOT"], "$PLOTS/fixed.png", cpu=True, site="$SITE")
 PY
 
 echo

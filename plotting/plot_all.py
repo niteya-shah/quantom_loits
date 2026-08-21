@@ -19,13 +19,13 @@ def main():
     made = 0
 
     if any(row.get("device") != "cpu" for row in rows):
-        made += int(generate_fixed([args.input], output / "gpu" / "fixed.pdf", cpu=False))
+        made += int(generate_fixed([args.input], output / "gpu" / "fixed.png", cpu=False))
 
     for site in available_sites(rows, cpu=True):
         site_output = output / site
-        made += int(generate_fixed([args.input], site_output / "fixed.pdf", cpu=True, site=site))
-        made += int(generate_strong(args.input, site_output / "strong.pdf", site=site))
-        made += int(generate_weak(args.input, site_output / "weak.pdf", site=site))
+        made += int(generate_fixed([args.input], site_output / "fixed.png", cpu=True, site=site))
+        made += int(generate_strong(args.input, site_output / "strong.png", site=site))
+        made += int(generate_weak(args.input, site_output / "weak.png", site=site))
 
     if not made:
         raise SystemExit("no standard plots could be generated from the canonical result tree")

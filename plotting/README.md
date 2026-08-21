@@ -34,7 +34,7 @@ Generate all available plots with:
 
 Outputs are organized as:
 
-    results/plots/gpu/fixed.pdf
-    results/plots/<cpu-site>/fixed.pdf
-    results/plots/<cpu-site>/strong.pdf
-    results/plots/<cpu-site>/weak.pdf
+    results/plots/gpu/fixed.png
+    results/plots/<cpu-site>/fixed.png
+    results/plots/<cpu-site>/strong.png
+    results/plots/<cpu-site>/weak.png

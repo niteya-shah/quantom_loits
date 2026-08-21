@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from plotting.common import load_rows, mean_std, rows_for_experiment, rows_for_site, training_samples
 
 
-def generate(input_root="results/training", output="results/plots/strong.pdf", site=None):
+def generate(input_root="results/training", output="results/plots/strong.png", site=None):
     rows = rows_for_experiment(load_rows([input_root]), "strong")
     if site is not None:
         rows = rows_for_site(rows, site)

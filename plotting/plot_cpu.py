@@ -16,9 +16,9 @@ def main(input_root="results/training", output_root="results/plots"):
     made = 0
     for site in sites:
         out = Path(output_root) / site
-        made += int(generate_fixed([input_root], out / "fixed.pdf", cpu=True, site=site))
-        made += int(generate_strong(input_root, out / "strong.pdf", site=site))
-        made += int(generate_weak(input_root, out / "weak.pdf", site=site))
+        made += int(generate_fixed([input_root], out / "fixed.png", cpu=True, site=site))
+        made += int(generate_strong(input_root, out / "strong.png", site=site))
+        made += int(generate_weak(input_root, out / "weak.png", site=site))
     if not made:
         raise SystemExit("not enough CPU benchmark data to generate plots")
 

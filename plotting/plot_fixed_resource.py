@@ -97,7 +97,7 @@ def generate(inputs, output, cpu, site=None):
 def main():
     parser = argparse.ArgumentParser(description="Generate a fixed-resource stacked/runtime plot.")
     parser.add_argument("--input", default="results/training")
-    parser.add_argument("--output", default="results/plots/fixed.pdf")
+    parser.add_argument("--output", default="results/plots/fixed.png")
     parser.add_argument("--site")
     parser.add_argument("--gpu", action="store_true")
     args = parser.parse_args()
