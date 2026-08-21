@@ -14,6 +14,7 @@ class RegionGuard {
  public:
   RegionGuard(bool enabled, const char* name) {
     if (!enabled) return;
+    sycl_loits::finish_submission(true);
     guard_ = std::make_unique<at::RecordFunction>(at::RecordScope::USER_SCOPE);
     if (guard_->isActive()) guard_->before(name);
   }

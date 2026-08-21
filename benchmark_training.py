@@ -77,7 +77,7 @@ def run(args, profile_regions=False):
     )
     hooks = None
     if profile_regions and args.backend == "torch":
-        hooks = RegionHooks(trainer.sampler.impl)
+        hooks = RegionHooks(trainer.sampler.impl, device=trainer.device)
 
     implementation = implementation_metadata(args.backend)
     threads = native_threads(args.backend, args.device)

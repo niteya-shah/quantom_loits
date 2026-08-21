@@ -1,4 +1,4 @@
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 import torch
 from torch import nn
@@ -29,8 +29,25 @@ def availability(device: torch.device | str = "cpu") -> tuple[bool, str]:
     return False, "Triton backend is GPU-only (cuda/ROCm or xpu)"
 
 
+def _synchronize_current_device():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif hasattr(torch, "xpu") and torch.xpu.is_available():
+        torch.xpu.synchronize()
+
+
+@contextmanager
+def _profile_region(name: str):
+    _synchronize_current_device()
+    with record_function(name):
+        try:
+            yield
+        finally:
+            _synchronize_current_device()
+
+
 def _region(enabled: bool, name: str):
-    return record_function(name) if enabled else nullcontext()
+    return _profile_region(name) if enabled else nullcontext()
 
 
 def _device_guard(device: torch.device | str):

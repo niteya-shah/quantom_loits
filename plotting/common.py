@@ -86,21 +86,7 @@ def mean_std(values):
     return mean, math.sqrt(variance)
 
 
-def metric_value(row, related_rows=None):
-    related_rows = tuple(related_rows or (row,))
-    device_values = [
-        float(candidate.get("device_ms") or 0.0)
-        for candidate in related_rows
-        if float(candidate.get("device_ms") or 0.0) > 0.0
-    ]
-    if device_values:
-        # torch.profiler can emit both the nested CPU annotation and a
-        # parentless device-side row for the same logical event_id. Use the
-        # device activity when it exists so host synchronization inside a
-        # record_function scope is not charged to the GPU kernel stage. Use
-        # max rather than sum because these rows are duplicate views of the
-        # same logical profiler event.
-        return max(device_values)
+def metric_value(row):
     return float(row.get("cpu_ms") or 0.0)
 
 
@@ -252,14 +238,11 @@ def training_root(row, by_id, intervals=None):
 
 
 def per_iteration_stage_samples(rows):
-    rows = [row for row in rows if is_regions_file(row)]
+    rows = [
+        row for row in rows
+        if is_regions_file(row) and row.get("region_timing") == "synchronized_wall"
+    ]
     by_id = _event_maps(rows)
-    event_rows = defaultdict(list)
-    for row in rows:
-        event_id = str(row.get("event_id") or "")
-        if event_id:
-            event_rows[(row.get("_path", ""), event_id)].append(row)
-
     intervals = _training_intervals(rows)
     region_to_stage = {
         region: stage
@@ -279,8 +262,7 @@ def per_iteration_stage_samples(rows):
         if root is None:
             continue
         key = (series_key(row), row["events"], root)
-        related = event_rows.get((row.get("_path", ""), event_id), (row,))
-        by_iteration[key][stage] += metric_value(row, related)
+        by_iteration[key][stage] += metric_value(row)
 
     grouped = defaultdict(lambda: defaultdict(list))
     for (series, events, _root), stage_values in by_iteration.items():

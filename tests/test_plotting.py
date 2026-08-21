@@ -31,6 +31,7 @@ def _base(**overrides):
         "warmup": 5,
         "iterations": 20,
         "seed": 0,
+        "region_timing": "synchronized_wall",
     }
     row.update(overrides)
     return row
@@ -107,7 +108,7 @@ def test_duplicate_profiler_event_ids_prefer_nested_row(tmp_path):
     assert data["F: RNG"] == [1.0]
 
 
-def test_duplicate_gpu_profiler_event_uses_device_activity(tmp_path):
+def test_synchronized_gpu_region_uses_semantic_annotation(tmp_path):
     path = tmp_path / "regions_triton_cuda_e100000.csv"
     base = _base(
         site="odyssey",
@@ -122,13 +123,25 @@ def test_duplicate_gpu_profiler_event_uses_device_activity(tmp_path):
         base | {"region": "gan::training_iteration", "occurrence": 0, "event_id": 1, "parent_event_id": "", "parent_region": "", "start_us": 0.0, "end_us": 2000.0, "cpu_ms": 2000.0},
         base | {"region": "gan::generator_step", "occurrence": 0, "event_id": 2, "parent_event_id": 1, "parent_region": "gan::training_iteration", "start_us": 10.0, "end_us": 1900.0, "cpu_ms": 1890.0},
         base | {"region": "loits::forward", "occurrence": 0, "event_id": 3, "parent_event_id": 2, "parent_region": "gan::generator_step", "start_us": 20.0, "end_us": 1800.0, "cpu_ms": 1780.0},
-        base | {"region": "loits::forward::allocation", "occurrence": 0, "event_id": 4, "parent_event_id": 3, "parent_region": "loits::forward", "start_us": 30.0, "end_us": 1600.0, "cpu_ms": 1570.0, "device_ms": 0.0},
-        base | {"region": "loits::forward::allocation", "occurrence": 1, "event_id": 4, "parent_event_id": "", "parent_region": "", "start_us": 1590.0, "end_us": 1598.0, "cpu_ms": 0.0, "device_ms": 0.008},
+        base | {"region": "loits::forward::allocation", "occurrence": 0, "event_id": 4, "parent_event_id": 3, "parent_region": "loits::forward", "start_us": 30.0, "end_us": 30.25, "cpu_ms": 0.25, "device_ms": 0.0},
+        base | {"region": "loits::forward::allocation", "occurrence": 1, "event_id": 4, "parent_event_id": "", "parent_region": "", "start_us": 30.0, "end_us": 2195.0, "cpu_ms": 0.0, "device_ms": 2165.0},
     ]
     _write(path, rows)
     data = next(iter(per_iteration_stage_samples(load_rows([path])).values()))
-    assert data["F: Allocation"] == [0.008]
-    assert data["total"] == [0.008]
+    assert data["F: Allocation"] == [0.25]
+    assert data["total"] == [0.25]
+
+
+def test_legacy_region_data_is_ignored(tmp_path):
+    path = tmp_path / "regions_torch_cuda_e100000.csv"
+    base = _base(device="cuda", backend="torch", implementation="torch")
+    base.pop("region_timing")
+    rows = [
+        base | {"region": "gan::training_iteration", "occurrence": 0, "event_id": 1, "parent_event_id": "", "parent_region": "", "cpu_ms": 100.0},
+        base | {"region": "loits::forward::random_x", "occurrence": 0, "event_id": 2, "parent_event_id": 1, "parent_region": "gan::training_iteration", "cpu_ms": 1.0},
+    ]
+    _write(path, rows)
+    assert per_iteration_stage_samples(load_rows([path])) == {}
 
 
 def test_parentless_native_backward_uses_training_interval(tmp_path):

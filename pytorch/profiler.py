@@ -7,32 +7,43 @@ from torch.profiler import record_function
 
 
 class RegionHooks:
-    def __init__(self, module, prefix="loits"):
+    def __init__(self, module, prefix="loits", device="cpu"):
         self.handles = []
         self.forward_contexts = {}
         self.backward_contexts = {}
+        self.device = torch.device(device)
         core = module.core if hasattr(module, "core") else module
         for name in core.region_names:
             region = getattr(core, name)
             self._attach(region, name, prefix)
 
+    def _synchronize(self):
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        elif self.device.type == "xpu":
+            torch.xpu.synchronize(self.device)
+
     def _attach(self, module, name, prefix):
         key = id(module)
 
         def forward_pre(*_):
+            self._synchronize()
             ctx = record_function(f"{prefix}::forward::{name}")
             ctx.__enter__()
             self.forward_contexts.setdefault(key, []).append(ctx)
 
         def forward_post(*_):
+            self._synchronize()
             self.forward_contexts[key].pop().__exit__(None, None, None)
 
         def backward_pre(*_):
+            self._synchronize()
             ctx = record_function(f"{prefix}::backward::{name}")
             ctx.__enter__()
             self.backward_contexts.setdefault(key, []).append(ctx)
 
         def backward_post(*_):
+            self._synchronize()
             self.backward_contexts[key].pop().__exit__(None, None, None)
 
         self.handles.extend(
@@ -122,6 +133,7 @@ class TrainingProfiler:
 
     @staticmethod
     def rows(prof, metadata):
+        metadata = dict(metadata, region_timing="synchronized_wall")
         rows = []
         occurrences = {}
 
@@ -136,6 +148,8 @@ class TrainingProfiler:
 
         for event in prof.events():
             if not relevant(event.name):
+                continue
+            if float(event.cpu_time_total or 0.0) <= 0.0:
                 continue
             occurrence = occurrences.get(event.name, 0)
             occurrences[event.name] = occurrence + 1
