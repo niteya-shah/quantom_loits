@@ -195,10 +195,10 @@ def _philox_uniform_kernel(
     block_u64 = block.to(tl.uint64)
     c0 = block_u64.to(tl.uint32)
     c1 = (block_u64 >> 32).to(tl.uint32)
-    c2 = stream_lo.to(tl.uint32) + tl.zeros((BLOCK,), dtype=tl.uint32)
-    c3 = stream_hi.to(tl.uint32) + tl.zeros((BLOCK,), dtype=tl.uint32)
-    k0 = seed_lo.to(tl.uint32) + tl.zeros((BLOCK,), dtype=tl.uint32)
-    k1 = seed_hi.to(tl.uint32) + tl.zeros((BLOCK,), dtype=tl.uint32)
+    c2 = tl.full((BLOCK,), stream_lo, tl.uint32)
+    c3 = tl.full((BLOCK,), stream_hi, tl.uint32)
+    k0 = tl.full((BLOCK,), seed_lo, tl.uint32)
+    k1 = tl.full((BLOCK,), seed_hi, tl.uint32)
 
     m0 = 0xD2511F53
     m1 = 0xCD9E8D57
