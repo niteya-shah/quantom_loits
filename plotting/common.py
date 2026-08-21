@@ -140,6 +140,11 @@ def series_label(key, show_threads=True):
         label = f"PyTorch\n({dev})"
         if device != "cpu" and site:
             label += f"\n{site}"
+    elif backend == "triton":
+        dev = {"cuda": "CUDA", "xpu": "XPU"}.get(device, device.upper())
+        label = f"Triton\n({dev})"
+        if site:
+            label += f"\n{site}"
     elif backend == "sycl":
         label = f"SYCL\n{implementation}"
     else:

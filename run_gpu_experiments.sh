@@ -168,6 +168,7 @@ run_benchmark() {
 
 for events in "${FIXED_EVENTS[@]}"; do
     run_benchmark torch "$events"
+    run_benchmark triton "$events"
     for variant in "${SYCL_VARIANTS[@]}"; do
         run_benchmark sycl "$events" "$variant"
     done

@@ -108,6 +108,24 @@ def _probe_sycl(device):
 register_backend("sycl", _load_sycl, _probe_sycl)
 
 
+def _load_triton(**kwargs):
+    from triton_backend.backend import TritonLOITS
+
+    return TritonLOITS(**kwargs)
+
+
+def _probe_triton(device):
+    try:
+        from triton_backend.backend import availability
+    except ImportError as exc:
+        return False, f"Triton is not available: {exc}"
+
+    return availability(device)
+
+
+register_backend("triton", _load_triton, _probe_triton)
+
+
 class LOITS(nn.Module):
     def __init__(self, backend="torch", **kwargs):
         super().__init__()

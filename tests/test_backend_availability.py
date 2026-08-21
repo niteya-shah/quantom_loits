@@ -67,3 +67,4 @@ def test_cpu_backend_device_constraints_are_reported():
     assert backend_status("openmp", "cpu")[0]
     assert not backend_status("cpp", "cuda")[0]
     assert not backend_status("openmp", "xpu")[0]
+    assert not backend_status("triton", "cpu")[0]
