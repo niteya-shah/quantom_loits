@@ -1069,7 +1069,9 @@ class TritonLOITS(nn.Module):
     def forward(self, theory_outputs, n_events):
         self._validate(theory_outputs)
         x_bins, xsec_x, q_bins, xsec_q, weights, acceptance = theory_outputs[:6]
-        if xsec_x.device != self.device:
+        if xsec_x.device.type != self.device.type or (
+            self.device.index is not None and xsec_x.device.index != self.device.index
+        ):
             raise ValueError(
                 f"Triton LOITS configured for {self.device}, got tensors on {xsec_x.device}"
             )
