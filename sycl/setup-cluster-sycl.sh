@@ -14,6 +14,9 @@
 #   ./sycl/setup-cluster-sycl.sh illyad fetch acpp
 #   ./sycl/setup-cluster-sycl.sh illyad build acpp
 #
+#   ./sycl/setup-cluster-sycl.sh athena fetch all
+#   ./sycl/setup-cluster-sycl.sh athena build all
+#
 #   ./sycl/setup-cluster-sycl.sh instinct fetch all
 #   ./sycl/setup-cluster-sycl.sh instinct build all
 #
@@ -61,6 +64,13 @@ modules_illyad() {
     :
 }
 
+modules_athena() {
+    # University of Oregon Athena: NVIDIA A100 (sm_80). The software stack is
+    # intentionally kept parallel to Illyad; CUDA_PATH is auto-detected from nvcc.
+    module load cuda/12.9
+    :
+}
+
 modules_instinct() {
     # Instinct is used only for CPU scaling. No CUDA/ROCm modules are loaded.
     module load gcc/13.2
@@ -82,7 +92,7 @@ modules_aurora() {
 
 usage() {
     cat >&2 <<'USAGE'
-usage: ./sycl/setup-cluster-sycl.sh <polaris|odyssey|illyad|instinct|aurora> <fetch|build> [all|acpp|dpcpp]
+usage: ./sycl/setup-cluster-sycl.sh <polaris|odyssey|illyad|athena|instinct|aurora> <fetch|build> [all|acpp|dpcpp]
 
 Examples:
   ./sycl/setup-cluster-sycl.sh polaris fetch all
@@ -91,6 +101,8 @@ Examples:
   ./sycl/setup-cluster-sycl.sh odyssey build acpp
   ./sycl/setup-cluster-sycl.sh illyad fetch acpp
   ./sycl/setup-cluster-sycl.sh illyad build acpp
+  ./sycl/setup-cluster-sycl.sh athena fetch all
+  ./sycl/setup-cluster-sycl.sh athena build all
   ./sycl/setup-cluster-sycl.sh instinct fetch all
   ./sycl/setup-cluster-sycl.sh instinct build all
   ./sycl/setup-cluster-sycl.sh aurora build dpcpp
@@ -178,6 +190,16 @@ case "$SITE" in
         DPCPP_TARGETS=cuda
         ACPP_VARIANT=acpp-illyad-h100
         DPCPP_VARIANT=dpcpp-illyad-h100
+        ;;
+    athena)
+        GPU_BACKEND=cuda
+        GPU_ARCH=sm_80
+        ACPP_TARGET=cuda
+        ACPP_ARCH=sm_80
+        LLVM_TARGETS=cpu,cuda
+        DPCPP_TARGETS=cuda
+        ACPP_VARIANT=acpp-athena-a100
+        DPCPP_VARIANT=dpcpp-athena-a100
         ;;
     instinct)
         GPU_BACKEND=cpu
@@ -502,6 +524,7 @@ case "$SITE" in
     polaris) modules_polaris ;;
     odyssey) modules_odyssey ;;
     illyad)   modules_illyad ;;
+    athena)   modules_athena ;;
     instinct) modules_instinct ;;
     aurora)   modules_aurora ;;
 esac
