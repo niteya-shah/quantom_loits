@@ -143,7 +143,7 @@ def series_label(key, show_threads=True):
         if site:
             label += f"\n{site}"
     elif backend == "sycl":
-        label = f"SYCL\n{implementation}"
+        label = f"{"\n".join(implementation.split("-"))}"
     else:
         label = implementation
 
