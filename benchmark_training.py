@@ -3,6 +3,8 @@ import os
 import re
 from pathlib import Path
 
+import torch
+
 from loits import backend_status, registered_backends
 from pytorch.gan import GANTrainer
 from pytorch.profiler import RegionHooks, TrainingProfiler
@@ -66,6 +68,11 @@ def row_metadata(args, implementation, threads):
 
 
 def run(args, profile_regions=False):
+    if args.device == "cpu":
+        threads = os.environ.get("QUANTOM_CPU_THREADS")
+        if threads:
+            torch.set_num_threads(int(threads))
+
     trainer = GANTrainer(
         backend=args.backend,
         device=args.device,

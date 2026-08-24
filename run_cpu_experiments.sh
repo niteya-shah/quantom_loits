@@ -142,7 +142,7 @@ verify_sycl_variant "$ACPP_VARIANT" 1 8 16 4
 verify_sycl_variant "$DPCPP_VARIANT" 8 4 8 4
 
 export OMP_PLACES=threads
-export OMP_PROC_BIND=close
+export OMP_PROC_BIND=spread
 export OMP_DYNAMIC=FALSE
 export QUANTOM_SITE="$SITE"
 
