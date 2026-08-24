@@ -1,3 +1,5 @@
+import math
+
 from matplotlib.patches import Patch
 
 from plotting.common import event_hatch, mean_std, series_label
@@ -15,10 +17,23 @@ def clustered_positions(nseries, nevents, cluster_width=0.82):
 
 
 def event_legend(events):
-    return [
-        Patch(facecolor="0.8", edgecolor="black", hatch=event_hatch(events_value, events), label=f"{events_value:,} Events")
-        for events_value in events
-    ]
+    handles = []
+    for events_value in events:
+        exponent = round(math.log10(events_value))
+        label = (
+            rf"$10^{{{exponent}}}$ Events"
+            if events_value == 10 ** exponent
+            else f"{events_value:g}"
+        )
+        handles.append(
+            Patch(
+                facecolor="0.8",
+                edgecolor="black",
+                hatch=event_hatch(events_value, events),
+                label=label,
+            )
+        )
+    return handles
 
 
 def stage_legend(stage_names, colors):
