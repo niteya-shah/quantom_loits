@@ -240,7 +240,11 @@ def training_root(row, by_id, intervals=None):
 def per_iteration_stage_samples(rows):
     rows = [
         row for row in rows
-        if is_regions_file(row) and row.get("region_timing") == "synchronized_wall"
+        if is_regions_file(row)
+        and (
+            row.get("region_timing") == "synchronized_wall"
+            or row.get("device") == "cpu"
+        )
     ]
     by_id = _event_maps(rows)
     intervals = _training_intervals(rows)

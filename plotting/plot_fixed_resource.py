@@ -57,6 +57,22 @@ def _gpu_implementation_rank(key):
     return (order.get(label, 99), label)
 
 
+def _cpu_implementation_label(key):
+    _site, backend, implementation, _device, _threads = key
+    if backend == "cpp":
+        return "C++"
+    if backend == "openmp":
+        return "OpenMP"
+    if backend == "sycl":
+        if implementation.startswith("acpp-"):
+            return "AdaptiveCPP"
+        if implementation.startswith("dpcpp-"):
+            return "DPC++"
+    if backend == "torch":
+        return "Torch"
+    return implementation
+
+
 def _gpu_device_columns(series):
     grouped = {}
     for key in series:
@@ -216,6 +232,13 @@ def generate(inputs, output, cpu, site=None):
         )
     else:
         fig, ax = plt.subplots(2, sharex="col", figsize=(12, 6), dpi=200)
+        ax[0].set_axisbelow(True)
+        ax[0].set_yticks([0, 20, 40, 60, 80, 100])
+        ax[0].yaxis.grid(True, which="major", linewidth=0.5, alpha=0.65)
+        ax[1].set_axisbelow(True)
+        ax[1].yaxis.grid(True, which="major", linewidth=0.5, alpha=0.85)
+        ax[1].yaxis.grid(True, which="minor", linewidth=0.3, alpha=0.65)
+
         _plot_breakdown(ax[0], series, events, stage_samples, colors)
         ax[0].set_ylabel("% of LOITS Runtime\n(Forward + Backward)")
         plot_runtime_bars(
@@ -226,20 +249,38 @@ def generate(inputs, output, cpu, site=None):
             "GAN Iteration Time (s)",
             show_threads=False,
         )
+        ax[1].set_xticklabels(
+            [_cpu_implementation_label(key) for key in series],
+            rotation=30,
+            ha="center",
+        )
+
         fig.subplots_adjust(
             wspace=0.10,
             hspace=0.12,
             top=0.96,
             bottom=0.14,
-            right=0.82,
+            right=0.88,
             left=0.08,
         )
-        ax[0].legend(
-            stage_handles,
-            [handle.get_label() for handle in stage_handles],
+        backward_legend = ax[0].legend(
+            [handle for handle, _label in backward_handles],
+            [label for _handle, label in backward_handles],
+            title="Backward",
             fontsize=7.5,
-            bbox_to_anchor=(1.01, 0.5),
-            loc="center left",
+            title_fontsize=8,
+            bbox_to_anchor=(1.01, 1.0),
+            loc="upper left",
+        )
+        ax[0].add_artist(backward_legend)
+        ax[0].legend(
+            [handle for handle, _label in forward_handles],
+            [label for _handle, label in forward_handles],
+            title="Forward",
+            fontsize=7.5,
+            title_fontsize=8,
+            bbox_to_anchor=(1.01, 0.52),
+            loc="upper left",
         )
         ax[1].legend(
             event_handles,

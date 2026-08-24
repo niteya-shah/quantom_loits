@@ -2,8 +2,8 @@
 
 
 # Run from inside an allocated CPU compute node/job.
-# By default all physical CPU cores visible to the allocation are used.
-# Override the maximum explicitly with, for example:
+# By default all logical CPUs visible to the allocation are used, including
+# SMT siblings. Override the maximum explicitly with, for example:
 #   NTHREADS=64 ./run_cpu_experiments.sh
 
 SITE="${SITE:?Set SITE explicitly, e.g. SITE=instinct or SITE=pinwheel}"
@@ -27,13 +27,13 @@ command -v taskset >/dev/null 2>&1 || {
     exit 2
 }
 command -v lscpu >/dev/null 2>&1 || {
-    echo "ERROR: lscpu is required to identify physical CPU cores." >&2
+    echo "ERROR: lscpu is required to identify CPU topology." >&2
     exit 2
 }
 
-# Select one logical CPU from each physical core, restricted to the CPU affinity
-# already granted to this job. This avoids accidentally scaling over SMT threads.
-mapfile -t PHYSICAL_CPUS < <(
+# Use every logical CPU granted to the job. Order them by SMT layer so scaling
+# fills physical cores before adding sibling hardware threads.
+mapfile -t LOGICAL_CPUS < <(
     python - <<'PY'
 import os
 import subprocess
@@ -42,7 +42,7 @@ allowed = os.sched_getaffinity(0)
 text = subprocess.check_output(
     ["lscpu", "-p=CPU,CORE,SOCKET,ONLINE"], text=True
 )
-seen = set()
+by_core = {}
 for line in text.splitlines():
     if not line or line.startswith("#"):
         continue
@@ -50,27 +50,34 @@ for line in text.splitlines():
     cpu = int(cpu_s)
     if cpu not in allowed or online != "Y":
         continue
-    physical = (int(socket_s), int(core_s))
-    if physical in seen:
-        continue
-    seen.add(physical)
-    print(cpu)
+    key = (int(socket_s), int(core_s))
+    by_core.setdefault(key, []).append(cpu)
+
+cores = sorted(
+    (sorted(cpus) for cpus in by_core.values()),
+    key=lambda cpus: cpus[0],
+)
+max_siblings = max((len(cpus) for cpus in cores), default=0)
+for sibling in range(max_siblings):
+    for cpus in cores:
+        if sibling < len(cpus):
+            print(cpus[sibling])
 PY
 )
 
-AVAILABLE_CORES="${#PHYSICAL_CPUS[@]}"
-if (( AVAILABLE_CORES == 0 )); then
-    echo "ERROR: no physical CPU cores are visible to this process." >&2
+AVAILABLE_THREADS="${#LOGICAL_CPUS[@]}"
+if (( AVAILABLE_THREADS == 0 )); then
+    echo "ERROR: no logical CPUs are visible to this process." >&2
     exit 2
 fi
 
-NTHREADS="${NTHREADS:-$AVAILABLE_CORES}"
+NTHREADS="${NTHREADS:-$AVAILABLE_THREADS}"
 if ! [[ "$NTHREADS" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: NTHREADS must be a positive integer." >&2
     exit 2
 fi
-if (( NTHREADS > AVAILABLE_CORES )); then
-    echo "ERROR: requested NTHREADS=$NTHREADS but only $AVAILABLE_CORES physical cores are visible." >&2
+if (( NTHREADS > AVAILABLE_THREADS )); then
+    echo "ERROR: requested NTHREADS=$NTHREADS but only $AVAILABLE_THREADS logical CPUs are visible." >&2
     exit 2
 fi
 
@@ -86,7 +93,7 @@ fi
 
 cpu_list_for_threads() {
     local threads="$1"
-    local selected=("${PHYSICAL_CPUS[@]:0:threads}")
+    local selected=("${LOGICAL_CPUS[@]:0:threads}")
     local IFS=,
     echo "${selected[*]}"
 }
@@ -134,7 +141,7 @@ PY
 verify_sycl_variant "$ACPP_VARIANT" 1 8 16 4
 verify_sycl_variant "$DPCPP_VARIANT" 8 4 8 4
 
-export OMP_PLACES=cores
+export OMP_PLACES=threads
 export OMP_PROC_BIND=close
 export OMP_DYNAMIC=FALSE
 export QUANTOM_SITE="$SITE"
@@ -143,11 +150,11 @@ mkdir -p "$OUTPUT_ROOT" "$PLOTS"
 
 echo "============================================================"
 echo "$SITE CPU scaling study"
-echo "Physical cores visible: $AVAILABLE_CORES"
-echo "Maximum cores used:      $NTHREADS"
+echo "Logical CPUs visible:    $AVAILABLE_THREADS"
+echo "Maximum threads used:    $NTHREADS"
 echo "Scaling points:          ${THREADS[*]}"
 echo "Strong workload:         $STRONG_EVENTS events"
-echo "Weak workload:           $EVENTS_PER_THREAD events/core"
+echo "Weak workload:           $EVENTS_PER_THREAD events/thread"
 echo "AdaptiveCpp:             $ACPP_VARIANT"
 echo "DPC++:                   $DPCPP_VARIANT"
 echo "============================================================"
@@ -169,9 +176,9 @@ run_benchmark() {
     echo
     echo "------------------------------------------------------------"
     if [[ -n "$variant" ]]; then
-        echo "experiment=$experiment backend=$backend variant=$variant events=$events cores=$threads cpus=$cpus"
+        echo "experiment=$experiment backend=$backend variant=$variant events=$events threads=$threads cpus=$cpus"
     else
-        echo "experiment=$experiment backend=$backend events=$events cores=$threads cpus=$cpus"
+        echo "experiment=$experiment backend=$backend events=$events threads=$threads cpus=$cpus"
     fi
     echo "------------------------------------------------------------"
 
@@ -253,7 +260,7 @@ done
 echo
 echo "============================================================"
 echo "3. Weak scaling"
-echo "   $EVENTS_PER_THREAD events/core"
+echo "   $EVENTS_PER_THREAD events/thread"
 echo "============================================================"
 
 for threads in "${THREADS[@]}"; do
