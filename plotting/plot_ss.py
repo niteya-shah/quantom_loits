@@ -7,6 +7,19 @@ import matplotlib.pyplot as plt
 from plotting.common import load_rows, mean_std, rows_for_experiment, rows_for_site, training_samples
 
 
+
+def _cpu_label(backend, implementation):
+    if backend == "openmp":
+        return "OpenMP"
+    if backend == "torch":
+        return "Torch"
+    if backend == "sycl":
+        if implementation.startswith("acpp-"):
+            return "AdaptiveCPP"
+        if implementation.startswith("dpcpp-"):
+            return "DPC++"
+    return implementation
+
 def generate(input_root="results/training", output="results/plots/strong.png", site=None):
     rows = rows_for_experiment(load_rows([input_root]), "strong")
     if site is not None:
@@ -59,12 +72,12 @@ def generate(input_root="results/training", output="results/plots/strong.png", s
             xs.append(tidx - total_width / 2 + width / 2 + sidx * width)
             ys.append(speedup)
             errors.append(error)
-        label = "C++ (OpenMP)" if backend == "openmp" else implementation
+        label = _cpu_label(backend, implementation)
         ax.bar(xs, ys, width=width * 0.92, yerr=errors, capsize=2, edgecolor="black", label=label)
 
     ax.set_xticks(range(len(all_threads)))
     ax.set_xticklabels([str(value) for value in all_threads])
-    ax.set_xlabel("Number of Threads")
+    ax.set_xlabel("Number of Hardware Threads")
     ax.set_ylabel("GAN Iteration Speedup over Serial C++")
     ax.axhline(1.0, color="black", linestyle="--", alpha=0.7)
     ax.legend(fontsize=9)
