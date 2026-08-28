@@ -45,7 +45,7 @@ def _gpu_implementation_label(key):
         if implementation.startswith("dpcpp-"):
             return "DPC++"
     if backend == "torch":
-        return "Torch"
+        return "PyTorch"
     if backend == "triton":
         return "Triton"
     return implementation
@@ -53,7 +53,7 @@ def _gpu_implementation_label(key):
 
 def _gpu_implementation_rank(key):
     label = _gpu_implementation_label(key)
-    order = {"AdaptiveCPP": 0, "DPC++": 1, "Torch": 2, "Triton": 3}
+    order = {"AdaptiveCPP": 0, "DPC++": 1, "PyTorch": 2, "Triton": 3}
     return (order.get(label, 99), label)
 
 
@@ -69,7 +69,7 @@ def _cpu_implementation_label(key):
         if implementation.startswith("dpcpp-"):
             return "DPC++"
     if backend == "torch":
-        return "Torch"
+        return "PyTorch"
     return implementation
 
 
@@ -163,6 +163,7 @@ def generate(inputs, output, cpu, site=None):
             2,
             len(columns),
             sharex="col",
+            sharey='row',
             figsize=(4.0 * len(columns), 6),
             dpi=300,
             squeeze=False,
@@ -197,7 +198,7 @@ def generate(inputs, output, cpu, site=None):
         ax[0, 0].set_ylabel("% of LOITS Runtime\n(Forward + Backward)")
         ax[1, 0].set_ylabel("GAN Iteration Time (s)")
         fig.subplots_adjust(
-            wspace=0.15,
+            wspace=0.05,
             hspace=0.10,
             top=0.95,
             bottom=0.12,
@@ -231,7 +232,7 @@ def generate(inputs, output, cpu, site=None):
             loc="center left",
         )
     else:
-        fig, ax = plt.subplots(2, sharex="col", figsize=(12, 6), dpi=200)
+        fig, ax = plt.subplots(2, sharex="both", figsize=(12, 6), dpi=200)
         ax[0].set_axisbelow(True)
         ax[0].set_yticks([0, 20, 40, 60, 80, 100])
         ax[0].yaxis.grid(True, which="major", linewidth=0.5, alpha=0.65)
